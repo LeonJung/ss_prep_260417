@@ -1,0 +1,13 @@
+repositories:
+  dg5f_ros2:
+    type: git
+    url: https://github.com/tesollodelto/dg5f_ros2.git
+    version: main
+  dg_hardware:
+    type: git
+    url: https://github.com/tesollodelto/dg_hardware.git
+    version: main
+  dg_tcp_comm:
+    type: git
+    url: https://github.com/tesollodelto/dg_tcp_comm.git
+    version: main

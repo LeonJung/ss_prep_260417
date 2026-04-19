@@ -1,0 +1,22 @@
+# DG5F contact detection thresholds (motor current in mA, absolute value).
+# Per-joint: below contact_low -> pure green (no contact)
+#            above contact_high -> pure red (hard contact)
+#            in between -> linear interpolation (green -> yellow -> red)
+# Joint order follows /dg5f_right/joint_states (rj_dg_F_J, F=1..5, J=1..4).
+
+/**/contact_monitor:
+  ros__parameters:
+    joint_states_topic: "/dg5f_right/joint_states"
+    contact_level_topic: "/dg5f_right/contact_level"
+    # 20 entries: F1J1..F1J4, F2J1..F2J4, ..., F5J1..F5J4
+    contact_low_mA:  [ 50.0, 50.0, 50.0, 50.0,
+                       50.0, 50.0, 50.0, 50.0,
+                       50.0, 50.0, 50.0, 50.0,
+                       50.0, 50.0, 50.0, 50.0,
+                       50.0, 50.0, 50.0, 50.0 ]
+    contact_high_mA: [ 400.0, 400.0, 400.0, 400.0,
+                       400.0, 400.0, 400.0, 400.0,
+                       400.0, 400.0, 400.0, 400.0,
+                       400.0, 400.0, 400.0, 400.0,
+                       400.0, 400.0, 400.0, 400.0 ]
+    publish_rate_hz: 30.0

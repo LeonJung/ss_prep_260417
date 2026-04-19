@@ -1,0 +1,40 @@
+# DG5F right-hand Manus teleop calibration.
+# All values derived from dg5f_driver/script/manus_retarget/manus_retarget.py
+# which was empirically tuned against a real Manus glove + DG5F pair.
+# Tweak here — do NOT edit retarget_node.py formulas.
+
+/**/manus_dg5f_retarget:
+  ros__parameters:
+    input_topic: /manus_glove_1
+    output_topic: /dg5f_right/rj_dg_pospid/reference
+    expected_side: right        # "right" | "left" | "any"
+
+    # --- Thumb CMC (rj_dg_1_1) ---
+    # Manus does NOT publish thumb CMC directly; pick how to fill it.
+    #   fixed        : constant thumb_cmc_fixed_value_rad (safest)
+    #   coupled      : linear blend of MCPStretch + MCPSpread
+    #                  out = (offset_deg - gain_stretch * MCPStretch
+    #                         + gain_spread * MCPSpread) * deg2rad
+    #   raw_nodes_ik : estimate from raw_nodes[] (stub; falls back to fixed)
+    thumb_cmc_mode: fixed
+    thumb_cmc_fixed_value_rad: 0.0
+    thumb_cmc_offset_deg: 58.5
+    thumb_cmc_gain_stretch: 1.0
+    thumb_cmc_gain_spread:  0.0
+
+    # --- Per-joint calibration (length 20) ---
+    calib: [1.0, 1.6, 1.3, 1.3,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.0, 1.0]
+
+    # --- Per-joint sign (length 20) ---
+    dir_sign: [ 1.0, -1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+                1.0, -1.0,  1.0,  1.0]
+
+    clamp_to_urdf_limits: true
+    apply_postprocess: true

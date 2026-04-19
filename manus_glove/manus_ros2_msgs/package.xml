@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>manus_ros2_msgs</name>
+  <version>0.0.1</version>
+  <description>
+    Stub definitions of the Manus ROS2 SDK message types used by this
+    workspace. Fields mirror the public Manus ROS2 documentation:
+    https://docs.manus-meta.com/3.1.0/Plugins/SDK/ROS2/ros2%20package/
+    Replace this directory with the official manus_ros2_msgs package
+    when deploying against a real Manus glove + SDK.
+  </description>
+  <maintainer email="jung.ryuwoon@gmail.com">jung</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>geometry_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

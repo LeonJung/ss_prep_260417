@@ -1,0 +1,21 @@
+# Upstream tesollodelto repos (each has its own git remote)
+dg/dg5f_ros2/
+dg/dg_hardware/
+dg/dg_tcp_comm/
+
+# VSCode local state (incl. huge C/C++ browse db)
+.vscode/
+
+# Claude Code per-project local settings
+.claude/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# colcon build outputs (actually live one level up in ~/hand_ws/, but guard anyway)
+build/
+install/
+log/
