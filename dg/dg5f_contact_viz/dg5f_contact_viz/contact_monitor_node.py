@@ -10,20 +10,25 @@ Publishes two std_msgs/Float32MultiArray topics:
   * /dg5f_right/contact_level           — 20 values (4 joints x 5 fingers)
   * /dg5f_right/fingertip_contact_level —  5 values (one per fingertip)
 
-Joint pipeline (per joint):
-  raw effort + velocity
-    -> if |velocity| > motion_velocity_threshold:
-         reset stability, CLEAR median history (stale samples are not
-         safe post-motion), publish 0 for that joint
-    -> else: median-window -> subtract baseline -> normalize [0,1]
+Joint pipeline (per finger):
+  * read effort & velocity for all 4 joints of the finger
+  * if the maximum |velocity| across the finger's joints exceeds
+    motion_velocity_threshold -> finger is moving. Reset that finger's
+    stability counter and publish 0s for all of this finger's joints
+    this tick. This covers tendon coupling: J4 current rises while J2
+    is flexing even though J4's own velocity is near zero, so gating
+    per-joint leaves residual flicker. Finger-scope gating does not.
+    The median history is NOT cleared — old samples naturally age out
+    via the rolling window, and keeping them avoids single-sample
+    bursts setting the lamp color right after motion stops.
+  * otherwise median-window -> subtract baseline -> normalize [0,1]
 
 Motion gating is the dominant filter for Manus teleop, where the hand
-is almost always moving. Clearing the history on every motion frame
-ensures post-motion readings aren't contaminated by pre-motion values.
+is almost always moving.
 
 Fingertip pipeline (per finger):
-  |F| = sqrt(fx^2 + fy^2 + fz^2)
-    -> EMA smooth -> normalize via fingertip_force_low / high
+  |F| = sqrt(fx^2 + fy^2 + fz^2) -> EMA smooth
+       -> normalize via fingertip_force_low / high
 """
 
 import math
@@ -102,7 +107,8 @@ class ContactMonitor(Node):
         self._baseline_ready = False
         self._calibrating = True
         self._latest = [0.0] * 20
-        self._motion_stable = [0] * 20
+        # Finger-level stability counter (one per finger, not per joint).
+        self._finger_stable = [0] * 5
         self._have_data = False
 
         # ---- fingertip state ----
@@ -149,29 +155,34 @@ class ContactMonitor(Node):
             return
         name_to_eff = dict(zip(msg.name, msg.effort))
         name_to_vel = dict(zip(msg.name, msg.velocity)) if msg.velocity else {}
-        for i, j in enumerate(DG5F_JOINTS):
-            if j not in name_to_eff:
-                continue
-            raw = abs(float(name_to_eff[j]))
-            if raw > self._reject_above:
-                continue
-            vel = abs(float(name_to_vel.get(j, 0.0)))
 
-            if vel > self._motion_vel_thr:
-                # Motion frame: don't contaminate median/baseline. Also clear
-                # history — stale pre-motion samples are not representative
-                # of the current state once motion has begun.
-                self._motion_stable[i] = 0
-                self._history[i].clear()
+        for f in range(5):
+            joint_idxs = [f * 4 + k for k in range(4)]
+            names = [DG5F_JOINTS[i] for i in joint_idxs]
+            if not all(n in name_to_eff for n in names):
                 continue
 
-            self._motion_stable[i] = min(self._motion_stable[i] + 1,
+            max_vel = max(abs(float(name_to_vel.get(n, 0.0))) for n in names)
+            if max_vel > self._motion_vel_thr:
+                # Any joint of this finger is moving — gate the whole
+                # finger (covers tendon coupling where J4 current rises
+                # while J2 is flexing). Keep the median history intact
+                # so post-motion normalization blends with pre-motion
+                # samples instead of jumping on a single fresh sample.
+                self._finger_stable[f] = 0
+                continue
+
+            self._finger_stable[f] = min(self._finger_stable[f] + 1,
                                          self._motion_settle_n + 1)
-            self._history[i].append(raw)
-            med = sorted(self._history[i])[len(self._history[i]) // 2]
-            if self._calibrating:
-                self._baseline_buf[i].append(med)
-            self._latest[i] = med
+            for i, n in zip(joint_idxs, names):
+                raw = abs(float(name_to_eff[n]))
+                if raw > self._reject_above:
+                    continue
+                self._history[i].append(raw)
+                med = sorted(self._history[i])[len(self._history[i]) // 2]
+                if self._calibrating:
+                    self._baseline_buf[i].append(med)
+                self._latest[i] = med
 
         self._have_data = True
 
@@ -197,8 +208,8 @@ class ContactMonitor(Node):
             b.clear()
         for h in self._history:
             h.clear()
-        for i in range(20):
-            self._motion_stable[i] = 0
+        for f in range(5):
+            self._finger_stable[f] = 0
         self._baseline_ready = False
         self._calibrating = True
         response.success = True
@@ -226,11 +237,14 @@ class ContactMonitor(Node):
         if self._calibrating or not self._baseline_ready:
             out.data = [0.0] * 20
         else:
-            out.data = [
-                self._normalize(i, self._latest[i])
-                if self._motion_stable[i] >= self._motion_settle_n else 0.0
-                for i in range(20)
-            ]
+            data = []
+            for f in range(5):
+                active = self._finger_stable[f] >= self._motion_settle_n
+                for k in range(4):
+                    i = f * 4 + k
+                    data.append(self._normalize(i, self._latest[i])
+                                if active else 0.0)
+            out.data = data
         self._pub.publish(out)
 
         # Fingertip F/T (5)
