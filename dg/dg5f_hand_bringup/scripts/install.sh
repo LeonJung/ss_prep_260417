@@ -47,6 +47,8 @@ if [[ "$SKIP_APT" != "1" ]]; then
     "ros-$ROS_DISTRO-xacro"
     "ros-$ROS_DISTRO-rmw-fastrtps-cpp"        # fallback RMW (Humble default, Jazzy alt)
     python3-pyqt5
+    python3-empy                              # URDF/xacro templating (ROS build-time)
+    python3-lark                              # rosidl parser (ROS build-time)
     python3-colcon-common-extensions
     python3-vcstool
     python3-rosdep
