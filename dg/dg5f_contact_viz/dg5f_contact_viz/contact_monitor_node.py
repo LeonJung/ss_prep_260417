@@ -1,11 +1,17 @@
 """Estimate per-joint contact level from motor-current feedback.
 
-Subscribes to sensor_msgs/JointState (effort field = motor current in mA in the
-DG5F stack) and publishes a normalized 20-float contact level on
-std_msgs/Float32MultiArray, where 0.0 = no contact (green) and 1.0 = hard
-contact (red). Layout matches the 20 DG5F joints in the order they appear on
-/joint_states.
+Subscribes to sensor_msgs/JointState (effort field on the DG5F stack
+carries motor current; scale varies by firmware, roughly 0.0–150+ on
+this testbed) and publishes a normalized 20-float contact level on
+std_msgs/Float32MultiArray, where 0.0 = no contact (green) and 1.0 =
+hard contact (red).
+
+A per-joint sliding-window median filter is applied before normalization
+to reject occasional Modbus comms glitches (isolated values like 152 or
+550 appearing on otherwise-quiet joints).
 """
+
+from collections import deque
 
 import rclpy
 from rclpy.node import Node
@@ -30,16 +36,21 @@ class ContactMonitor(Node):
         self.declare_parameter("contact_low", [2.0] * 20)
         self.declare_parameter("contact_high", [8.0] * 20)
         self.declare_parameter("publish_rate_hz", 30.0)
+        self.declare_parameter("median_window", 5)        # 1 disables filter
+        self.declare_parameter("reject_above", 1000.0)    # hard-reject obviously bogus samples
 
         self._in_topic = self.get_parameter("joint_states_topic").value
         self._out_topic = self.get_parameter("contact_level_topic").value
         self._low = list(self.get_parameter("contact_low").value)
         self._high = list(self.get_parameter("contact_high").value)
         self._rate = float(self.get_parameter("publish_rate_hz").value)
+        self._win_size = max(1, int(self.get_parameter("median_window").value))
+        self._reject_above = float(self.get_parameter("reject_above").value)
 
         if len(self._low) != 20 or len(self._high) != 20:
             raise ValueError("contact_low / contact_high must have 20 entries")
 
+        self._history = [deque(maxlen=self._win_size) for _ in range(20)]
         self._latest = [0.0] * 20
         self._have_data = False
 
@@ -54,7 +65,8 @@ class ContactMonitor(Node):
 
         self.get_logger().info(
             f"contact_monitor: {self._in_topic} -> {self._out_topic} "
-            f"@ {self._rate:.1f} Hz"
+            f"@ {self._rate:.1f} Hz, median_window={self._win_size}, "
+            f"reject_above={self._reject_above}"
         )
 
     def _on_js(self, msg: JointState):
@@ -62,8 +74,16 @@ class ContactMonitor(Node):
             return
         name_to_eff = dict(zip(msg.name, msg.effort))
         for i, j in enumerate(DG5F_JOINTS):
-            if j in name_to_eff:
-                self._latest[i] = abs(float(name_to_eff[j]))
+            if j not in name_to_eff:
+                continue
+            raw = abs(float(name_to_eff[j]))
+            # Obviously-bogus values (Modbus frame corruption): drop entirely.
+            if raw > self._reject_above:
+                continue
+            hist = self._history[i]
+            hist.append(raw)
+            # Per-joint sliding-window median — rejects isolated spikes.
+            self._latest[i] = sorted(hist)[len(hist) // 2]
         self._have_data = True
 
     def _tick(self):

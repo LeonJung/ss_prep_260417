@@ -1,6 +1,9 @@
-# DG5F contact detection thresholds — units follow whatever the
-# /dg5f_right/joint_states effort field publishes (measured 0.0–~14.0 on
-# this testbed; likely motor current in amperes).
+# DG5F contact detection thresholds. The effort field units follow the
+# DG firmware's reporting; observed scale on this testbed reaches 150+ on
+# firm contact, with occasional Modbus glitches pushing single samples
+# into the 150–550 range even when idle. A per-joint sliding-window
+# median filter suppresses those spikes before the color mapping.
+#
 # Per-joint: below contact_low  -> pure green (no contact)
 #            above contact_high -> pure red  (hard contact)
 #            linear interpolation in between.
@@ -10,15 +13,20 @@
   ros__parameters:
     joint_states_topic: "/dg5f_right/joint_states"
     contact_level_topic: "/dg5f_right/contact_level"
+
+    # Filter — reject Modbus glitches before normalization.
+    median_window: 5          # sliding per-joint median. 1 disables.
+    reject_above: 1000.0      # hard-drop samples above this (frame corruption)
+
     # 20 entries: F1J1..F1J4, F2J1..F2J4, ..., F5J1..F5J4
-    contact_low:  [ 2.0, 2.0, 2.0, 2.0,
-                    2.0, 2.0, 2.0, 2.0,
-                    2.0, 2.0, 2.0, 2.0,
-                    2.0, 2.0, 2.0, 2.0,
-                    2.0, 2.0, 2.0, 2.0 ]
-    contact_high: [ 8.0, 8.0, 8.0, 8.0,
-                    8.0, 8.0, 8.0, 8.0,
-                    8.0, 8.0, 8.0, 8.0,
-                    8.0, 8.0, 8.0, 8.0,
-                    8.0, 8.0, 8.0, 8.0 ]
+    contact_low:  [ 5.0, 5.0, 5.0, 5.0,
+                    5.0, 5.0, 5.0, 5.0,
+                    5.0, 5.0, 5.0, 5.0,
+                    5.0, 5.0, 5.0, 5.0,
+                    5.0, 5.0, 5.0, 5.0 ]
+    contact_high: [ 80.0, 80.0, 80.0, 80.0,
+                    80.0, 80.0, 80.0, 80.0,
+                    80.0, 80.0, 80.0, 80.0,
+                    80.0, 80.0, 80.0, 80.0,
+                    80.0, 80.0, 80.0, 80.0 ]
     publish_rate_hz: 30.0
