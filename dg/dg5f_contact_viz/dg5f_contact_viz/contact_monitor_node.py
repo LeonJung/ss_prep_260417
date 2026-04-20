@@ -27,18 +27,18 @@ class ContactMonitor(Node):
 
         self.declare_parameter("joint_states_topic", "/dg5f_right/joint_states")
         self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
-        self.declare_parameter("contact_low_mA", [50.0] * 20)
-        self.declare_parameter("contact_high_mA", [400.0] * 20)
+        self.declare_parameter("contact_low", [2.0] * 20)
+        self.declare_parameter("contact_high", [8.0] * 20)
         self.declare_parameter("publish_rate_hz", 30.0)
 
         self._in_topic = self.get_parameter("joint_states_topic").value
         self._out_topic = self.get_parameter("contact_level_topic").value
-        self._low = list(self.get_parameter("contact_low_mA").value)
-        self._high = list(self.get_parameter("contact_high_mA").value)
+        self._low = list(self.get_parameter("contact_low").value)
+        self._high = list(self.get_parameter("contact_high").value)
         self._rate = float(self.get_parameter("publish_rate_hz").value)
 
         if len(self._low) != 20 or len(self._high) != 20:
-            raise ValueError("contact_low_mA / contact_high_mA must have 20 entries")
+            raise ValueError("contact_low / contact_high must have 20 entries")
 
         self._latest = [0.0] * 20
         self._have_data = False
