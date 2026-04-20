@@ -1,14 +1,10 @@
-"""Estimate per-joint contact level from motor current + fingertip F/T.
+"""Estimate per-joint contact level from motor-current feedback.
 
-Subscribes to:
-  * sensor_msgs/JointState    (motor current in the effort field;
-                               scale varies, reaches 100+ on firm grip)
-  * 5 x geometry_msgs/WrenchStamped from the fingertip broadcasters
-    (/dg5f_right/fingertip_{1..5}_broadcaster/wrench)
-
-Publishes two std_msgs/Float32MultiArray topics:
-  * /dg5f_right/contact_level           — 20 values (4 joints x 5 fingers)
-  * /dg5f_right/fingertip_contact_level —  5 values (one per fingertip)
+Subscribes to sensor_msgs/JointState (the effort field carries motor
+current on the DG5F stack; scale varies by firmware, reaches 100+ on
+firm grip) and publishes a normalized 20-float contact level on
+std_msgs/Float32MultiArray, where 0.0 = no contact (green) and 1.0 =
+hard contact (red).
 
 Joint pipeline (per finger):
   * read effort & velocity for all 4 joints of the finger
@@ -17,21 +13,21 @@ Joint pipeline (per finger):
     stability counter and publish 0s for all of this finger's joints
     this tick. This covers tendon coupling: J4 current rises while J2
     is flexing even though J4's own velocity is near zero, so gating
-    per-joint leaves residual flicker. Finger-scope gating does not.
-    The median history is NOT cleared — old samples naturally age out
-    via the rolling window, and keeping them avoids single-sample
-    bursts setting the lamp color right after motion stops.
+    per-joint leaves a residual flicker. Finger-scope gating does not.
+    The median history is NOT cleared — old samples age out via the
+    rolling window, preventing single-sample bursts from flashing the
+    lamp right after motion stops.
   * otherwise median-window -> subtract baseline -> normalize [0,1]
 
 Motion gating is the dominant filter for Manus teleop, where the hand
 is almost always moving.
 
-Fingertip pipeline (per finger):
-  |F| = sqrt(fx^2 + fy^2 + fz^2) -> EMA smooth
-       -> normalize via fingertip_force_low / high
+The baseline step handles per-joint idle bias: distal joints carry
+gravity load, so their idle current is not the same as the base
+joints. Subtracting the observed idle gives every joint a clean 0
+reference.
 """
 
-import math
 from collections import deque
 
 import rclpy
@@ -39,7 +35,6 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from std_srvs.srv import Trigger
-from geometry_msgs.msg import WrenchStamped
 
 DG5F_JOINTS = [
     "rj_dg_1_1", "rj_dg_1_2", "rj_dg_1_3", "rj_dg_1_4",
@@ -49,16 +44,11 @@ DG5F_JOINTS = [
     "rj_dg_5_1", "rj_dg_5_2", "rj_dg_5_3", "rj_dg_5_4",
 ]
 
-DEFAULT_FINGERTIP_TOPICS = [
-    f"/dg5f_right/fingertip_{i}_broadcaster/wrench" for i in range(1, 6)
-]
-
 
 class ContactMonitor(Node):
     def __init__(self):
         super().__init__("contact_monitor")
 
-        # ---- joint-side parameters ----
         self.declare_parameter("joint_states_topic", "/dg5f_right/joint_states")
         self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
         self.declare_parameter("contact_low", [2.0] * 20)
@@ -69,14 +59,6 @@ class ContactMonitor(Node):
         self.declare_parameter("baseline_samples", 60)
         self.declare_parameter("motion_velocity_threshold", 0.05)
         self.declare_parameter("motion_settle_samples", 10)
-
-        # ---- fingertip F/T parameters ----
-        self.declare_parameter("fingertip_level_topic",
-                               "/dg5f_right/fingertip_contact_level")
-        self.declare_parameter("fingertip_topics", DEFAULT_FINGERTIP_TOPICS)
-        self.declare_parameter("fingertip_force_low", 0.5)   # N
-        self.declare_parameter("fingertip_force_high", 5.0)  # N
-        self.declare_parameter("fingertip_ema_alpha", 0.3)   # EMA smoothing
 
         self._in_topic = self.get_parameter("joint_states_topic").value
         self._out_topic = self.get_parameter("contact_level_topic").value
@@ -91,46 +73,24 @@ class ContactMonitor(Node):
         self._motion_settle_n = max(
             1, int(self.get_parameter("motion_settle_samples").value))
 
-        self._tip_out_topic = self.get_parameter("fingertip_level_topic").value
-        self._tip_topics = list(self.get_parameter("fingertip_topics").value)
-        self._tip_low = float(self.get_parameter("fingertip_force_low").value)
-        self._tip_high = float(self.get_parameter("fingertip_force_high").value)
-        self._tip_alpha = float(self.get_parameter("fingertip_ema_alpha").value)
-
         if len(self._low) != 20 or len(self._high) != 20:
             raise ValueError("contact_low / contact_high must have 20 entries")
 
-        # ---- joint state ----
         self._history = [deque(maxlen=self._win_size) for _ in range(20)]
         self._baseline_buf = [deque(maxlen=self._baseline_n) for _ in range(20)]
         self._baseline = [0.0] * 20
         self._baseline_ready = False
         self._calibrating = True
         self._latest = [0.0] * 20
-        # Finger-level stability counter (one per finger, not per joint).
         self._finger_stable = [0] * 5
         self._have_data = False
 
-        # ---- fingertip state ----
-        self._tip_force = [0.0] * 5            # EMA-smoothed magnitude (N)
-        self._tip_have_any = False
-
-        # ---- ROS plumbing ----
         self._sub = self.create_subscription(
             JointState, self._in_topic, self._on_js, 10)
         self._pub = self.create_publisher(
             Float32MultiArray, self._out_topic, 10)
-        self._tip_pub = self.create_publisher(
-            Float32MultiArray, self._tip_out_topic, 10)
         self._zero_srv = self.create_service(
             Trigger, "~/zero_baseline", self._zero_cb)
-
-        self._tip_subs = []
-        for idx, topic in enumerate(self._tip_topics[:5]):
-            # Use an ordinary lambda default arg to bind idx.
-            cb = (lambda msg, i=idx: self._on_wrench(i, msg))
-            self._tip_subs.append(self.create_subscription(
-                WrenchStamped, topic, cb, 10))
 
         period = 1.0 / max(self._rate, 1.0)
         self._timer = self.create_timer(period, self._tick)
@@ -143,12 +103,8 @@ class ContactMonitor(Node):
             f"| calibrating baseline for {self._baseline_n} samples... "
             f"(HOLD THE HAND STILL)"
         )
-        self.get_logger().info(
-            f"fingertip: {len(self._tip_subs)} wrench subs -> {self._tip_out_topic} "
-            f"| force thresholds {self._tip_low:.2f}..{self._tip_high:.2f} N"
-        )
 
-    # ---------------- subscribers -----------------
+    # ---------------- subscriber -----------------
 
     def _on_js(self, msg: JointState):
         if not msg.effort:
@@ -164,11 +120,6 @@ class ContactMonitor(Node):
 
             max_vel = max(abs(float(name_to_vel.get(n, 0.0))) for n in names)
             if max_vel > self._motion_vel_thr:
-                # Any joint of this finger is moving — gate the whole
-                # finger (covers tendon coupling where J4 current rises
-                # while J2 is flexing). Keep the median history intact
-                # so post-motion normalization blends with pre-motion
-                # samples instead of jumping on a single fresh sample.
                 self._finger_stable[f] = 0
                 continue
 
@@ -189,16 +140,6 @@ class ContactMonitor(Node):
         if self._calibrating and all(len(b) >= self._baseline_n
                                      for b in self._baseline_buf):
             self._finish_calibration()
-
-    def _on_wrench(self, idx: int, msg: WrenchStamped):
-        fx = float(msg.wrench.force.x)
-        fy = float(msg.wrench.force.y)
-        fz = float(msg.wrench.force.z)
-        mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-        # EMA smoothing
-        a = self._tip_alpha
-        self._tip_force[idx] = a * mag + (1.0 - a) * self._tip_force[idx]
-        self._tip_have_any = True
 
     # ---------------- service --------------------
 
@@ -231,7 +172,6 @@ class ContactMonitor(Node):
     def _tick(self):
         if not self._have_data:
             return
-        # Joint contact (20)
         out = Float32MultiArray()
         out.layout.dim = [MultiArrayDimension(label="joint", size=20, stride=20)]
         if self._calibrating or not self._baseline_ready:
@@ -247,12 +187,6 @@ class ContactMonitor(Node):
             out.data = data
         self._pub.publish(out)
 
-        # Fingertip F/T (5)
-        tip = Float32MultiArray()
-        tip.layout.dim = [MultiArrayDimension(label="finger", size=5, stride=5)]
-        tip.data = [self._normalize_tip(i) for i in range(5)]
-        self._tip_pub.publish(tip)
-
     def _normalize(self, i: int, raw: float) -> float:
         adjusted = raw - self._baseline[i]
         if adjusted < 0.0:
@@ -261,12 +195,6 @@ class ContactMonitor(Node):
         if hi <= lo:
             return 0.0
         x = (adjusted - lo) / (hi - lo)
-        return float(max(0.0, min(1.0, x)))
-
-    def _normalize_tip(self, i: int) -> float:
-        if self._tip_high <= self._tip_low:
-            return 0.0
-        x = (self._tip_force[i] - self._tip_low) / (self._tip_high - self._tip_low)
         return float(max(0.0, min(1.0, x)))
 
 

@@ -13,7 +13,6 @@
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
-  <depend>geometry_msgs</depend>
   <exec_depend>python3-pyqt5</exec_depend>
 
   <export>

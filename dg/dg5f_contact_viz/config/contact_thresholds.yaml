@@ -29,20 +29,6 @@
     motion_velocity_threshold: 0.05   # rad/s
     motion_settle_samples: 10         # ~333 ms at 30 Hz
 
-    # Fingertip F/T broadcaster inputs (from dg5f_driver when
-    # ft_broadcaster:=true). Force magnitude in N is normalized by
-    # fingertip_force_low/high after EMA smoothing.
-    fingertip_level_topic: "/dg5f_right/fingertip_contact_level"
-    fingertip_topics:
-      - "/dg5f_right/fingertip_1_broadcaster/wrench"
-      - "/dg5f_right/fingertip_2_broadcaster/wrench"
-      - "/dg5f_right/fingertip_3_broadcaster/wrench"
-      - "/dg5f_right/fingertip_4_broadcaster/wrench"
-      - "/dg5f_right/fingertip_5_broadcaster/wrench"
-    fingertip_force_low: 0.5
-    fingertip_force_high: 5.0
-    fingertip_ema_alpha: 0.3
-
     # All 20 entries below are relative to baseline (baseline-subtracted).
     contact_low:  [ 10.0, 10.0, 10.0, 10.0,
                     10.0, 10.0, 10.0, 10.0,
