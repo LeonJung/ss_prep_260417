@@ -1,29 +1,32 @@
-# DG5F contact detection thresholds. The effort field units follow the
-# DG firmware's reporting; observed scale on this testbed reaches 150+ on
-# firm contact, with occasional Modbus glitches pushing single samples
-# into the 150–550 range even when idle. A per-joint sliding-window
-# median filter suppresses those spikes before the color mapping.
+# DG5F contact detection config.
 #
-# Per-joint: below contact_low  -> pure green (no contact)
-#            above contact_high -> pure red  (hard contact)
-#            linear interpolation in between.
-# Joint order follows /dg5f_right/joint_states (rj_dg_F_J, F=1..5, J=1..4).
+# Pipeline per joint:
+#   raw effort
+#     -> reject_above            (hard-drop Modbus frame corruption)
+#     -> median over median_window samples
+#     -> subtract auto-calibrated baseline  (idle reading per joint)
+#     -> map to [0, 1] using contact_low / contact_high
+#
+# Thresholds are relative to the baseline, so the same numbers work
+# across joints even when their idle currents differ (e.g. distal
+# joints sit higher under gravity). Re-trigger calibration with:
+#   ros2 service call /contact_monitor/zero_baseline std_srvs/srv/Trigger
 
 /**/contact_monitor:
   ros__parameters:
     joint_states_topic: "/dg5f_right/joint_states"
     contact_level_topic: "/dg5f_right/contact_level"
 
-    # Filter — reject Modbus glitches before normalization.
-    median_window: 5          # sliding per-joint median. 1 disables.
-    reject_above: 1000.0      # hard-drop samples above this (frame corruption)
+    median_window: 7              # odd > 1 is best; rejects 3 consecutive outliers
+    reject_above: 1000.0          # drop frame-corruption samples outright
+    baseline_samples: 60          # ~2 s at 30 Hz; HOLD HAND STILL at startup
 
-    # 20 entries: F1J1..F1J4, F2J1..F2J4, ..., F5J1..F5J4
-    contact_low:  [ 5.0, 5.0, 5.0, 5.0,
-                    5.0, 5.0, 5.0, 5.0,
-                    5.0, 5.0, 5.0, 5.0,
-                    5.0, 5.0, 5.0, 5.0,
-                    5.0, 5.0, 5.0, 5.0 ]
+    # All 20 entries below are relative to baseline (baseline-subtracted).
+    contact_low:  [ 10.0, 10.0, 10.0, 10.0,
+                    10.0, 10.0, 10.0, 10.0,
+                    10.0, 10.0, 10.0, 10.0,
+                    10.0, 10.0, 10.0, 10.0,
+                    10.0, 10.0, 10.0, 10.0 ]
     contact_high: [ 80.0, 80.0, 80.0, 80.0,
                     80.0, 80.0, 80.0, 80.0,
                     80.0, 80.0, 80.0, 80.0,
