@@ -7,19 +7,27 @@ level on std_msgs/Float32MultiArray, where 0.0 = no contact (green)
 and 1.0 = hard contact (red).
 
 Pipeline per joint:
-  raw effort
-    -> hard reject anything above `reject_above`  (Modbus frame corruption)
-    -> sliding-window median over `median_window` samples
-    -> subtract per-joint baseline  (auto-calibrated at startup, or on
-                                      /contact_monitor/zero_baseline service)
-    -> clamp >= 0
-    -> linear map to [0, 1] using contact_low / contact_high
+  raw effort + velocity
+    -> if |velocity| > motion_velocity_threshold -> motion-gate:
+         reset stability counter, drop sample, publish 0 (pure green)
+    -> else
+       hard reject anything above `reject_above`   (Modbus corruption)
+       -> sliding-window median over `median_window` samples
+       -> subtract per-joint baseline  (auto-calibrated at startup, or
+                                        via /contact_monitor/zero_baseline)
+       -> clamp >= 0
+       -> linear map to [0, 1] using contact_low / contact_high
 
-The baseline step is what makes the visualization robust: DG5F's idle
-motor current is not uniform across joints (distal joints carry gravity
-load, so J4s sit at an elevated baseline even when nothing is touching
-them). Subtracting the observed idle per joint gives every joint a
-clean 0 reference.
+Motion gating: commanded finger motion draws non-trivial motor current
+even when nothing is touched. Masking samples collected while the joint
+is moving lets the lamp respond only to external resistance (contact,
+obstruction) once the joint settles for motion_settle_samples frames.
+This is critical for Manus teleop where the hand moves almost
+continuously.
+
+The baseline step handles per-joint idle bias: distal joints carry
+gravity load, so their idle current is not the same as the base joints.
+Subtracting the observed idle gives every joint a clean 0 reference.
 """
 
 from collections import deque
@@ -50,7 +58,9 @@ class ContactMonitor(Node):
         self.declare_parameter("publish_rate_hz", 30.0)
         self.declare_parameter("median_window", 15)
         self.declare_parameter("reject_above", 1000.0)
-        self.declare_parameter("baseline_samples", 60)  # ~2 s @ 30 Hz
+        self.declare_parameter("baseline_samples", 60)        # ~2 s @ 30 Hz
+        self.declare_parameter("motion_velocity_threshold", 0.05)  # rad/s
+        self.declare_parameter("motion_settle_samples", 5)    # ~170 ms @ 30 Hz
 
         self._in_topic = self.get_parameter("joint_states_topic").value
         self._out_topic = self.get_parameter("contact_level_topic").value
@@ -60,6 +70,10 @@ class ContactMonitor(Node):
         self._win_size = max(1, int(self.get_parameter("median_window").value))
         self._reject_above = float(self.get_parameter("reject_above").value)
         self._baseline_n = max(1, int(self.get_parameter("baseline_samples").value))
+        self._motion_vel_thr = float(
+            self.get_parameter("motion_velocity_threshold").value)
+        self._motion_settle_n = max(
+            1, int(self.get_parameter("motion_settle_samples").value))
 
         if len(self._low) != 20 or len(self._high) != 20:
             raise ValueError("contact_low / contact_high must have 20 entries")
@@ -70,6 +84,7 @@ class ContactMonitor(Node):
         self._baseline_ready = False
         self._calibrating = True
         self._latest = [0.0] * 20
+        self._motion_stable = [0] * 20   # consecutive below-threshold samples
         self._have_data = False
 
         self._sub = self.create_subscription(
@@ -87,6 +102,8 @@ class ContactMonitor(Node):
         self.get_logger().info(
             f"contact_monitor: {self._in_topic} -> {self._out_topic} "
             f"@ {self._rate:.1f} Hz | median_window={self._win_size} "
+            f"| motion_gate |v|<{self._motion_vel_thr:.3f} rad/s "
+            f"for {self._motion_settle_n} samples "
             f"| calibrating baseline for {self._baseline_n} samples... "
             f"(HOLD THE HAND STILL)"
         )
@@ -97,19 +114,30 @@ class ContactMonitor(Node):
         if not msg.effort:
             return
         name_to_eff = dict(zip(msg.name, msg.effort))
+        name_to_vel = dict(zip(msg.name, msg.velocity)) if msg.velocity else {}
         for i, j in enumerate(DG5F_JOINTS):
             if j not in name_to_eff:
                 continue
             raw = abs(float(name_to_eff[j]))
             if raw > self._reject_above:
                 continue
+            vel = abs(float(name_to_vel.get(j, 0.0)))
+
+            if vel > self._motion_vel_thr:
+                # Joint is moving: don't contaminate the median window or the
+                # baseline buffer. Reset stability so lamp stays dim until the
+                # joint settles for motion_settle_n consecutive frames.
+                self._motion_stable[i] = 0
+                continue
+
+            self._motion_stable[i] = min(self._motion_stable[i] + 1,
+                                         self._motion_settle_n + 1)
             self._history[i].append(raw)
             med = sorted(self._history[i])[len(self._history[i]) // 2]
             if self._calibrating:
                 self._baseline_buf[i].append(med)
-                self._latest[i] = med
-            else:
-                self._latest[i] = med
+            self._latest[i] = med
+
         self._have_data = True
 
         # Finish calibration once every joint has enough samples.
@@ -123,6 +151,8 @@ class ContactMonitor(Node):
         self.get_logger().info("zero_baseline requested — recalibrating")
         for b in self._baseline_buf:
             b.clear()
+        for i in range(20):
+            self._motion_stable[i] = 0
         self._baseline_ready = False
         self._calibrating = True
         response.success = True
@@ -152,7 +182,11 @@ class ContactMonitor(Node):
         if self._calibrating or not self._baseline_ready:
             out.data = [0.0] * 20  # pure green while learning the floor
         else:
-            out.data = [self._normalize(i, self._latest[i]) for i in range(20)]
+            out.data = [
+                self._normalize(i, self._latest[i])
+                if self._motion_stable[i] >= self._motion_settle_n else 0.0
+                for i in range(20)
+            ]
         self._pub.publish(out)
 
     def _normalize(self, i: int, raw: float) -> float:

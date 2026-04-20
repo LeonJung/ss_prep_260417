@@ -21,6 +21,14 @@
     reject_above: 1000.0          # drop frame-corruption samples outright
     baseline_samples: 60          # ~2 s at 30 Hz; HOLD HAND STILL at startup
 
+    # Motion gating — silence the lamp while the joint is commanded to move.
+    # During motion the PID draws current for the acceleration itself, not
+    # for external contact; we mask those frames so only resting-with-
+    # resistance events light up. Must settle for motion_settle_samples
+    # consecutive low-velocity frames before the lamp re-activates.
+    motion_velocity_threshold: 0.05   # rad/s
+    motion_settle_samples: 5          # ~170 ms at 30 Hz
+
     # All 20 entries below are relative to baseline (baseline-subtracted).
     contact_low:  [ 10.0, 10.0, 10.0, 10.0,
                     10.0, 10.0, 10.0, 10.0,
