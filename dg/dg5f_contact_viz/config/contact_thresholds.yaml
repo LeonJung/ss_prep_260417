@@ -17,7 +17,7 @@
     joint_states_topic: "/dg5f_right/joint_states"
     contact_level_topic: "/dg5f_right/contact_level"
 
-    median_window: 7              # odd > 1 is best; rejects 3 consecutive outliers
+    median_window: 15             # ~500 ms at 30 Hz; rejects 7 bursts in a row
     reject_above: 1000.0          # drop frame-corruption samples outright
     baseline_samples: 60          # ~2 s at 30 Hz; HOLD HAND STILL at startup
 

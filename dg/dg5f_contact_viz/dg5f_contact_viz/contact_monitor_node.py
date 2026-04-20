@@ -48,7 +48,7 @@ class ContactMonitor(Node):
         self.declare_parameter("contact_low", [2.0] * 20)
         self.declare_parameter("contact_high", [8.0] * 20)
         self.declare_parameter("publish_rate_hz", 30.0)
-        self.declare_parameter("median_window", 7)
+        self.declare_parameter("median_window", 15)
         self.declare_parameter("reject_above", 1000.0)
         self.declare_parameter("baseline_samples", 60)  # ~2 s @ 30 Hz
 
