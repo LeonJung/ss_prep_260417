@@ -64,7 +64,11 @@ test with the real gripper — no human-in-the-loop mistakes.
 1. Power on DG5F right hand.
 2. Wire the PC NIC to the gripper (direct or via switch).
 3. Set a static IPv4 on that NIC, e.g. `169.254.186.10/24`.
-4. Verify: `ping 169.254.186.72` (default gripper IP).
+4. Verify: `ping 169.254.186.72` (right-hand gripper IP).
+
+> **Hand IPs on this testbed** (both port 502):
+> - Right hand: `169.254.186.72`  ← launch/yaml defaults
+> - Left hand:  `169.254.186.73`  ← pass `delto_ip:=169.254.186.73` when wiring the left
 
 ### 2.2  Run (4 terminals, all after `source install/setup.bash`)
 
