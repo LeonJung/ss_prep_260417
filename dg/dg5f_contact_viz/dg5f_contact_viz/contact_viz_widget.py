@@ -1,13 +1,17 @@
-"""Qt widget showing an anatomical right-hand rendering with 20 contact lamps.
+"""Qt widget showing an anatomical hand (right / left / both) with contact lamps.
 
-Subscribes to std_msgs/Float32MultiArray on:
-  * contact_level_topic — 20 values, motor-current-derived (4 joints x 5 fingers)
+Subscribes to one or two std_msgs/Float32MultiArray topics (20 values each):
+  * /dg5f_right/contact_level  (when display_mode is 'right' or 'both')
+  * /dg5f_left/contact_level   (when display_mode is 'left' or 'both')
 
-Lamps are placed at the actual anatomical joint centers: the J1 abduction
-marker sits just inside the palm (same anatomical joint as J2, drawn
-smaller), J2 at the MCP knuckle, J3 at the PIP, J4 at the DIP.
+Lamps are placed at the actual joint centers: J1 abduction marker inside
+the palm, J2 at the MCP knuckle, J3 at the PIP, J4 at the DIP. Colors use
+HSV hue 120° (green) -> 0° (red) for level 0..1.
 
-Color mapping: HSV hue 120° (green) at level 0 -> 0° (red) at level 1.
+display_mode=left renders the same hand silhouette horizontally mirrored
+(palm view of the opposite hand). display_mode=both splits the window
+into two side-by-side sections — left hand on the left, right on the
+right — with thumbs facing inward.
 """
 
 import math
@@ -29,8 +33,8 @@ from PyQt5.QtWidgets import QApplication, QWidget
 
 FINGER_NAMES = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
 
-# Each entry: (name, base_xy_ratio, tip_xy_ratio, width_ratio, j1..j4 fracs).
-# Joint fractions are along the base->tip axis (0 base, 1 tip).
+# Canonical (right-hand, palm view) geometry. Mirrored at paint time
+# when the drawing is for the left hand.
 FINGERS = [
     ("Thumb",  (0.27, 0.72), (0.07, 0.38), 0.075, (-0.08, 0.05, 0.40, 0.75)),
     ("Index",  (0.33, 0.66), (0.33, 0.18), 0.070, (-0.05, 0.05, 0.40, 0.75)),
@@ -39,7 +43,6 @@ FINGERS = [
     ("Pinky",  (0.76, 0.69), (0.76, 0.27), 0.060, (-0.05, 0.05, 0.40, 0.75)),
 ]
 
-# Palm outline — cubic-bezier path in ratio coords (wrist bottom).
 PALM_PATH_POINTS = [
     ("M", (0.28, 0.94)),
     ("L", (0.72, 0.94)),
@@ -73,24 +76,49 @@ def lerp(a, b, t):
 class ContactBridge(Node):
     def __init__(self):
         super().__init__("contact_viz")
-        self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
-        topic = self.get_parameter("contact_level_topic").value
-        self._levels = [0.0] * 20
-        self._lock = threading.Lock()
-        self._sub = self.create_subscription(
-            Float32MultiArray, topic, self._on_levels, 10)
-        self.get_logger().info(f"contact_viz: listening on {topic}")
+        self.declare_parameter("display_mode", "right")       # right | left | both
+        self.declare_parameter(
+            "right_level_topic", "/dg5f_right/contact_level")
+        self.declare_parameter(
+            "left_level_topic", "/dg5f_left/contact_level")
 
-    def _on_levels(self, msg):
+        self.mode = str(self.get_parameter("display_mode").value).lower()
+        if self.mode not in ("right", "left", "both"):
+            raise ValueError(
+                f"display_mode must be right | left | both, got {self.mode!r}")
+
+        self._right_levels = [0.0] * 20
+        self._left_levels = [0.0] * 20
+        self._lock = threading.Lock()
+
+        if self.mode in ("right", "both"):
+            t = self.get_parameter("right_level_topic").value
+            self.create_subscription(
+                Float32MultiArray, t, self._on_right, 10)
+            self.get_logger().info(f"contact_viz: subscribed right on {t}")
+        if self.mode in ("left", "both"):
+            t = self.get_parameter("left_level_topic").value
+            self.create_subscription(
+                Float32MultiArray, t, self._on_left, 10)
+            self.get_logger().info(f"contact_viz: subscribed left on {t}")
+
+    def _on_right(self, msg):
+        self._store(self._right_levels, msg)
+
+    def _on_left(self, msg):
+        self._store(self._left_levels, msg)
+
+    def _store(self, target, msg):
         data = list(msg.data)
         if len(data) < 20:
             data = data + [0.0] * (20 - len(data))
         with self._lock:
-            self._levels = [float(max(0.0, min(1.0, v))) for v in data[:20]]
+            for i in range(20):
+                target[i] = float(max(0.0, min(1.0, data[i])))
 
     def snapshot(self):
         with self._lock:
-            return list(self._levels)
+            return list(self._right_levels), list(self._left_levels)
 
 
 # ------------------------ HandWidget ------------------------
@@ -106,50 +134,89 @@ class HandWidget(QWidget):
     COLOR_HAND_EDGE = QColor("#8a715e")
     COLOR_NAIL = QColor("#d8c4b0")
     COLOR_LABEL = QColor("#cfcfcf")
+    COLOR_BADGE = QColor("#8acafa")
     COLOR_LAMP_OUTLINE = QColor("#111")
 
     def __init__(self, bridge: ContactBridge):
         super().__init__()
-        self.setWindowTitle("DG5F Contact (right hand)")
         self._bridge = bridge
-        self._levels = [0.0] * 20
-        self.setMinimumSize(self.MIN_W, self.MIN_H)
+        self._mode = bridge.mode
+
+        if self._mode == "both":
+            self.setWindowTitle("DG5F Contact (bimanual)")
+            self.setMinimumSize(self.MIN_W * 2, self.MIN_H)
+        elif self._mode == "left":
+            self.setWindowTitle("DG5F Contact (left hand)")
+            self.setMinimumSize(self.MIN_W, self.MIN_H)
+        else:
+            self.setWindowTitle("DG5F Contact (right hand)")
+            self.setMinimumSize(self.MIN_W, self.MIN_H)
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh)
+        self._timer.timeout.connect(self.update)
         self._timer.start(50)
-
-    def _refresh(self):
-        self._levels = self._bridge.snapshot()
-        self.update()
 
     # --------------- geometry helpers ---------------
 
-    def _pt(self, x, y, w, h):
-        return QPointF(x * w, y * h)
+    @staticmethod
+    def _rx(x, mirror):
+        return (1.0 - x) if mirror else x
 
-    def _finger_axis_point(self, finger_idx, frac, w, h):
+    def _pt(self, x, y, w, h, mirror):
+        return QPointF(self._rx(x, mirror) * w, y * h)
+
+    def _finger_axis_point(self, finger_idx, frac, w, h, mirror):
         base = FINGERS[finger_idx][1]
         tip = FINGERS[finger_idx][2]
         x = lerp(base[0], tip[0], frac)
         y = lerp(base[1], tip[1], frac)
-        return QPointF(x * w, y * h)
+        return QPointF(self._rx(x, mirror) * w, y * h)
 
     # --------------- paint ---------------
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        w, h = self.width(), self.height()
-
         p.fillRect(self.rect(), self.COLOR_BG)
 
-        self._paint_hand(p, w, h)
-        self._paint_finger_labels(p, w, h)
-        self._paint_lamps(p, w, h)
+        right_levels, left_levels = self._bridge.snapshot()
 
-    def _paint_hand(self, p, w, h):
-        palm = self._build_palm_path(w, h)
+        if self._mode == "both":
+            half = self.width() // 2
+            self._paint_one_hand(
+                p, 0, 0, half, self.height(),
+                levels=left_levels, mirror=True, badge="LEFT")
+            self._paint_one_hand(
+                p, half, 0, self.width() - half, self.height(),
+                levels=right_levels, mirror=False, badge="RIGHT")
+            # Separator line
+            p.setPen(QPen(QColor("#333"), 1, Qt.DotLine))
+            p.drawLine(half, 12, half, self.height() - 12)
+        elif self._mode == "left":
+            self._paint_one_hand(
+                p, 0, 0, self.width(), self.height(),
+                levels=left_levels, mirror=True)
+        else:
+            self._paint_one_hand(
+                p, 0, 0, self.width(), self.height(),
+                levels=right_levels, mirror=False)
+
+    # ------ one section ------
+
+    def _paint_one_hand(self, p, ox, oy, w, h, levels, mirror, badge=None):
+        p.save()
+        p.translate(ox, oy)
+
+        self._paint_hand(p, w, h, mirror)
+        self._paint_finger_labels(p, w, h, mirror)
+        self._paint_lamps(p, w, h, levels, mirror)
+        if badge:
+            self._paint_badge(p, w, h, badge)
+
+        p.restore()
+
+    def _paint_hand(self, p, w, h, mirror):
+        palm = self._build_palm_path(w, h, mirror)
         grad = QLinearGradient(QPointF(0.5 * w, 0.66 * h),
                                QPointF(0.5 * w, 0.94 * h))
         grad.setColorAt(0.0, self.COLOR_HAND_FILL_LIGHT)
@@ -159,32 +226,34 @@ class HandWidget(QWidget):
         p.drawPath(palm)
 
         for f in range(5):
-            self._paint_finger(p, w, h, f)
+            self._paint_finger(p, w, h, f, mirror)
 
         p.setPen(QPen(QColor("#715a48"), 1))
         for f in range(5):
-            self._paint_nail(p, w, h, f)
+            self._paint_nail(p, w, h, f, mirror)
 
-    def _build_palm_path(self, w, h):
+    def _build_palm_path(self, w, h, mirror):
         path = QPainterPath()
         for entry in PALM_PATH_POINTS:
             cmd = entry[0]
             if cmd == "M":
-                path.moveTo(self._pt(*entry[1], w, h))
+                path.moveTo(self._pt(*entry[1], w, h, mirror))
             elif cmd == "L":
-                path.lineTo(self._pt(*entry[1], w, h))
+                path.lineTo(self._pt(*entry[1], w, h, mirror))
             elif cmd == "C":
-                c1 = self._pt(*entry[1], w, h)
-                c2 = self._pt(*entry[2], w, h)
-                end = self._pt(*entry[3], w, h)
+                c1 = self._pt(*entry[1], w, h, mirror)
+                c2 = self._pt(*entry[2], w, h, mirror)
+                end = self._pt(*entry[3], w, h, mirror)
                 path.cubicTo(c1, c2, end)
         path.closeSubpath()
         return path
 
-    def _paint_finger(self, p, w, h, f):
+    def _paint_finger(self, p, w, h, f, mirror):
         _, base, tip, width_ratio, _ = FINGERS[f]
-        bx, by = base[0] * w, base[1] * h
-        tx, ty = tip[0] * w, tip[1] * h
+        bx = self._rx(base[0], mirror) * w
+        by = base[1] * h
+        tx = self._rx(tip[0], mirror) * w
+        ty = tip[1] * h
         dx, dy = tx - bx, ty - by
         length = (dx * dx + dy * dy) ** 0.5
         if length < 1.0:
@@ -239,10 +308,12 @@ class HandWidget(QWidget):
             b = QPointF(kx - px * k_w_px, ky - py * k_w_px)
             p.drawLine(a, b)
 
-    def _paint_nail(self, p, w, h, f):
+    def _paint_nail(self, p, w, h, f, mirror):
         _, base, tip, width_ratio, _ = FINGERS[f]
-        tx, ty = tip[0] * w, tip[1] * h
-        bx, by = base[0] * w, base[1] * h
+        tx = self._rx(tip[0], mirror) * w
+        ty = tip[1] * h
+        bx = self._rx(base[0], mirror) * w
+        by = base[1] * h
         dx, dy = tx - bx, ty - by
         length = (dx * dx + dy * dy) ** 0.5
         if length < 1.0:
@@ -262,7 +333,7 @@ class HandWidget(QWidget):
         p.drawEllipse(QRectF(-nail_w, -nail_h, 2 * nail_w, 2 * nail_h))
         p.restore()
 
-    def _paint_finger_labels(self, p, w, h):
+    def _paint_finger_labels(self, p, w, h, mirror):
         p.setPen(self.COLOR_LABEL)
         font = QFont()
         font.setPointSize(9)
@@ -275,22 +346,27 @@ class HandWidget(QWidget):
             (0.76, 0.98),
         ]
         for (rx, ry), name in zip(label_positions, FINGER_NAMES):
-            p.drawText(QRectF(rx * w - 40, ry * h - 9, 80, 18),
+            x = self._rx(rx, mirror) * w
+            y = ry * h
+            p.drawText(QRectF(x - 40, y - 9, 80, 18),
                        Qt.AlignCenter, name)
 
-    def _paint_lamps(self, p, w, h):
+    def _paint_lamps(self, p, w, h, levels, mirror):
         font = QFont()
         font.setPointSize(8)
         p.setFont(font)
         for f in range(5):
             jfracs = FINGERS[f][4]
             for j in range(4):
-                center = self._finger_axis_point(f, jfracs[j], w, h)
-                self._paint_lamp(p, center, self._levels[f * 4 + j],
-                                 label=f"J{j + 1}",
-                                 is_abduction=(j == 0))
+                center = self._finger_axis_point(f, jfracs[j], w, h, mirror)
+                self._paint_lamp(
+                    p, center, levels[f * 4 + j],
+                    label=f"J{j + 1}",
+                    is_abduction=(j == 0),
+                    mirror=mirror,
+                )
 
-    def _paint_lamp(self, p, center, level, label, is_abduction=False):
+    def _paint_lamp(self, p, center, level, label, is_abduction, mirror):
         r = self.LAMP_DIAMETER / 2.0
         if is_abduction:
             r *= 0.70
@@ -301,8 +377,20 @@ class HandWidget(QWidget):
         p.drawEllipse(center, r, r)
         if not is_abduction:
             p.setPen(QColor("#9a9a9a"))
-            p.drawText(QRectF(center.x() + r + 3, center.y() - 8, 24, 16),
+            # Label floats opposite-side of center from the lamp so it does not
+            # land on top of an adjacent finger's lamp after mirroring.
+            xoff = -(r + 3 + 20) if mirror else (r + 3)
+            p.drawText(QRectF(center.x() + xoff, center.y() - 8, 24, 16),
                        Qt.AlignLeft | Qt.AlignVCenter, label)
+
+    def _paint_badge(self, p, w, h, text):
+        # Top-center hand label when running in bimanual mode.
+        p.setPen(self.COLOR_BADGE)
+        font = QFont()
+        font.setPointSize(11)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(QRectF(0, 6, w, 22), Qt.AlignCenter, text)
 
 
 # ------------------------ main ------------------------
@@ -322,7 +410,8 @@ def main(args=None):
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     win = HandWidget(bridge)
-    win.resize(HandWidget.MIN_W, HandWidget.MIN_H)
+    w = HandWidget.MIN_W * (2 if bridge.mode == "both" else 1)
+    win.resize(w, HandWidget.MIN_H)
     win.show()
 
     ros_thread = threading.Thread(target=_spin_ros, args=(bridge,), daemon=True)

@@ -36,21 +36,35 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from std_srvs.srv import Trigger
 
-DG5F_JOINTS = [
+DG5F_JOINTS_RIGHT = [
     "rj_dg_1_1", "rj_dg_1_2", "rj_dg_1_3", "rj_dg_1_4",
     "rj_dg_2_1", "rj_dg_2_2", "rj_dg_2_3", "rj_dg_2_4",
     "rj_dg_3_1", "rj_dg_3_2", "rj_dg_3_3", "rj_dg_3_4",
     "rj_dg_4_1", "rj_dg_4_2", "rj_dg_4_3", "rj_dg_4_4",
     "rj_dg_5_1", "rj_dg_5_2", "rj_dg_5_3", "rj_dg_5_4",
 ]
+DG5F_JOINTS_LEFT = [n.replace("rj_", "lj_") for n in DG5F_JOINTS_RIGHT]
+# Back-compat alias (unit tests import this by name).
+DG5F_JOINTS = DG5F_JOINTS_RIGHT
 
 
 class ContactMonitor(Node):
     def __init__(self):
         super().__init__("contact_monitor")
 
-        self.declare_parameter("joint_states_topic", "/dg5f_right/joint_states")
-        self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
+        # Side selection first so the topic defaults can depend on it.
+        self.declare_parameter("hand_side", "right")  # right | left
+        self._hand_side = str(self.get_parameter("hand_side").value).lower()
+        if self._hand_side not in ("right", "left"):
+            raise ValueError(
+                f"hand_side must be 'right' or 'left', got {self._hand_side!r}")
+        self._joints = (DG5F_JOINTS_LEFT if self._hand_side == "left"
+                        else DG5F_JOINTS_RIGHT)
+
+        self.declare_parameter(
+            "joint_states_topic", f"/dg5f_{self._hand_side}/joint_states")
+        self.declare_parameter(
+            "contact_level_topic", f"/dg5f_{self._hand_side}/contact_level")
         self.declare_parameter("contact_low", [2.0] * 20)
         self.declare_parameter("contact_high", [8.0] * 20)
         self.declare_parameter("publish_rate_hz", 30.0)
@@ -96,7 +110,8 @@ class ContactMonitor(Node):
         self._timer = self.create_timer(period, self._tick)
 
         self.get_logger().info(
-            f"contact_monitor: {self._in_topic} -> {self._out_topic} "
+            f"contact_monitor[{self._hand_side}]: "
+            f"{self._in_topic} -> {self._out_topic} "
             f"@ {self._rate:.1f} Hz | median={self._win_size} "
             f"| motion_gate |v|<{self._motion_vel_thr:.3f} rad/s "
             f"for {self._motion_settle_n} samples "
@@ -114,7 +129,7 @@ class ContactMonitor(Node):
 
         for f in range(5):
             joint_idxs = [f * 4 + k for k in range(4)]
-            names = [DG5F_JOINTS[i] for i in joint_idxs]
+            names = [self._joints[i] for i in joint_idxs]
             if not all(n in name_to_eff for n in names):
                 continue
 

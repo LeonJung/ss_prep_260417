@@ -1,20 +1,12 @@
-# DG5F contact detection config — right hand.
-#
-# Pipeline per joint:
-#   raw effort
-#     -> reject_above            (hard-drop Modbus frame corruption)
-#     -> median over median_window samples
-#     -> subtract auto-calibrated baseline  (idle reading per joint)
-#     -> map to [0, 1] using contact_low / contact_high
-#
-# Thresholds are relative to the baseline. Re-trigger calibration with:
-#   ros2 service call /<node>/zero_baseline std_srvs/srv/Trigger
+# DG5F contact detection config — left hand.
+# Mirror of contact_thresholds.yaml with lj_* topics.
+# See that file for the pipeline description.
 
 /**:
   ros__parameters:
-    hand_side: right
-    joint_states_topic: "/dg5f_right/joint_states"
-    contact_level_topic: "/dg5f_right/contact_level"
+    hand_side: left
+    joint_states_topic: "/dg5f_left/joint_states"
+    contact_level_topic: "/dg5f_left/contact_level"
 
     median_window: 15
     reject_above: 1000.0
