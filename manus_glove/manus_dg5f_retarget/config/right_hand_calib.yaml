@@ -3,8 +3,9 @@
 # which was empirically tuned against a real Manus glove + DG5F pair.
 # Tweak here — do NOT edit retarget_node.py formulas.
 
-/**/manus_dg5f_retarget:
+/**:
   ros__parameters:
+    hand_side: right
     input_topic: /manus_glove_1
     output_topic: /dg5f_right/rj_dg_pospid/reference
     expected_side: right        # "right" | "left" | "any"

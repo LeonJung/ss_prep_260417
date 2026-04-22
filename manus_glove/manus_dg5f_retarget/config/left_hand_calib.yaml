@@ -3,7 +3,7 @@
 # The empirical per-joint formula and calib magnitudes are symmetric;
 # only dir_sign and hand_side flip for the left hand.
 
-/**/manus_dg5f_retarget:
+/**:
   ros__parameters:
     hand_side: left
     input_topic: /manus_glove_0
