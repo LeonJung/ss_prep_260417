@@ -48,6 +48,13 @@ exec(helpers, _stub)  # noqa: S102 — trusted source
 
 raw_to_joint_deg = _stub["raw_to_joint_deg"]
 RIGHT_JOINT_LIMITS = _stub["RIGHT_JOINT_LIMITS"]
+LEFT_JOINT_LIMITS = _stub["LEFT_JOINT_LIMITS"]
+RIGHT_JOINT_NAMES = _stub["RIGHT_JOINT_NAMES"]
+LEFT_JOINT_NAMES = _stub["LEFT_JOINT_NAMES"]
+DIR_RIGHT_DEFAULT = _stub["DIR_RIGHT_DEFAULT"]
+DIR_LEFT_DEFAULT = _stub["DIR_LEFT_DEFAULT"]
+POSTPROC_RIGHT = _stub["POSTPROC_RIGHT"]
+POSTPROC_LEFT = _stub["POSTPROC_LEFT"]
 
 
 def approx(a, b, tol=1e-6):
@@ -116,10 +123,31 @@ def test_thumb_cmc_coupled():
 
 
 def test_limits_cover_20_joints():
-    assert len(RIGHT_JOINT_LIMITS) == 20
-    for lo, hi in RIGHT_JOINT_LIMITS.values():
-        assert lo <= hi
+    for limits in (RIGHT_JOINT_LIMITS, LEFT_JOINT_LIMITS):
+        assert len(limits) == 20
+        for lo, hi in limits.values():
+            assert lo <= hi
     print("PASS test_limits_cover_20_joints")
+
+
+def test_left_right_mirror_consistency():
+    # Joint names should differ only in the hand prefix.
+    assert len(RIGHT_JOINT_NAMES) == len(LEFT_JOINT_NAMES) == 20
+    for r, l in zip(RIGHT_JOINT_NAMES, LEFT_JOINT_NAMES):
+        assert r.replace("rj_", "lj_") == l
+    # dir_sign is also length-20 on both sides.
+    assert len(DIR_RIGHT_DEFAULT) == len(DIR_LEFT_DEFAULT) == 20
+    # Thumb dir signs are mirrored: right (1,-1,1,1) vs left (-1,1,-1,-1).
+    assert DIR_RIGHT_DEFAULT[:4] == [1, -1, 1, 1]
+    assert DIR_LEFT_DEFAULT[:4] == [-1, 1, -1, -1]
+    # Thumb postproc is mirrored on indices 1,2,3 while index 0 is "skip"
+    # on both (thumb_cmc.py owns it).
+    assert POSTPROC_RIGHT[0] == POSTPROC_LEFT[0] == "skip"
+    assert POSTPROC_RIGHT[1] == "no_positive"
+    assert POSTPROC_LEFT[1] == "no_negative"
+    assert POSTPROC_RIGHT[2] == "no_negative"
+    assert POSTPROC_LEFT[2] == "no_positive"
+    print("PASS test_left_right_mirror_consistency")
 
 
 if __name__ == "__main__":
@@ -129,4 +157,5 @@ if __name__ == "__main__":
     test_thumb_cmc_fixed()
     test_thumb_cmc_coupled()
     test_limits_cover_20_joints()
+    test_left_right_mirror_consistency()
     print("\nALL UNIT TESTS PASSED")

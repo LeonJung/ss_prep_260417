@@ -1,0 +1,44 @@
+# DG5F left-hand Manus teleop calibration.
+# Mirror of right_hand_calib.yaml with hand-specific sign / topic / side.
+# The empirical per-joint formula and calib magnitudes are symmetric;
+# only dir_sign and hand_side flip for the left hand.
+
+/**/manus_dg5f_retarget:
+  ros__parameters:
+    hand_side: left
+    input_topic: /manus_glove_0
+    output_topic: /dg5f_left/lj_dg_pospid/reference
+    expected_side: left        # "right" | "left" | "any"
+
+    # --- Thumb CMC (lj_dg_1_1) ---
+    # Manus does NOT publish thumb CMC directly. Modes:
+    #   fixed        : constant thumb_cmc_fixed_value_rad
+    #   coupled      : linear blend of MCPStretch + MCPSpread, then
+    #                  multiplied by dir_sign[0] (which is negative
+    #                  for the left hand, matching the manus_retarget.py
+    #                  left-hand sign convention).
+    #   raw_nodes_ik : stub; falls back to fixed.
+    thumb_cmc_mode: fixed
+    thumb_cmc_fixed_value_rad: 0.0
+    thumb_cmc_offset_deg: 58.5
+    thumb_cmc_gain_stretch: 1.0
+    thumb_cmc_gain_spread:  0.0
+
+    # --- Per-joint calibration (length 20) ---
+    # Same magnitudes as the right hand; sign differences are in dir_sign.
+    calib: [1.0, 1.6, 1.3, 1.3,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.0, 1.0]
+
+    # --- Per-joint sign (length 20) ---
+    # dir_arr for the LEFT hand from the original manus_retarget.py.
+    dir_sign: [-1.0,  1.0, -1.0, -1.0,
+                1.0,  1.0,  1.0,  1.0,
+                1.0,  1.0,  1.0,  1.0,
+                1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0]
+
+    clamp_to_urdf_limits: true
+    apply_postprocess: true

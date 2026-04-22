@@ -90,6 +90,8 @@ reconnect the right glove first or switch the input topic via launch arg.
 
 ## 4. Running the teleop
 
+### Right hand (glove id 1, IP 169.254.186.72)
+
 Real Manus glove + real DG5F:
 ```
 ros2 launch manus_dg5f_retarget manus_teleop_right.launch.py \
@@ -102,20 +104,50 @@ ros2 launch manus_dg5f_retarget manus_teleop_right.launch.py \
      manus_source:=sim use_mock_hardware:=false
 ```
 
+### Left hand (glove id 0, IP 169.254.186.73)
+
+```
+ros2 launch manus_dg5f_retarget manus_teleop_left.launch.py \
+     manus_source:=real use_mock_hardware:=false
+```
+The left launch uses `left_hand_calib.yaml`, subscribes to
+`/manus_glove_0`, publishes to `/dg5f_left/lj_dg_pospid/reference`,
+and includes the dg5f_left_pid_all_controller (IP 169.254.186.73).
+
+### Bimanual (both hands)
+
+If you want both launches up at once, **only one of them should launch
+the real Manus driver** — the driver binds the USB dongle, so running
+two is a conflict. Start the driver separately and use
+`manus_source:=external` on both launches:
+
+```
+# terminal A — shared Manus driver (publishes both /manus_glove_0 and /manus_glove_1)
+ros2 run manus_ros2 manus_data_publisher
+# terminal B — right teleop
+ros2 launch manus_dg5f_retarget manus_teleop_right.launch.py \
+     manus_source:=external use_mock_hardware:=false
+# terminal C — left teleop
+ros2 launch manus_dg5f_retarget manus_teleop_left.launch.py \
+     manus_source:=external use_mock_hardware:=false
+```
+
+### Terminal-per-piece layout
+
 If you prefer to run the Manus driver and DG driver in their own
-terminals (e.g. for easier log separation), run each manually and just
-launch the retargeter:
+terminals:
 ```
 # terminal A
 ros2 launch dg5f_driver dg5f_right_pid_all_controller.launch.py \
      delto_ip:=169.254.186.72
 # terminal B
-ros2 run manus_ros2 manus_data_publisher     # or our sim_glove
+ros2 run manus_ros2 manus_data_publisher    # or our sim_glove
 # terminal C
-ros2 launch manus_dg5f_retarget retarget_only.launch.py
+ros2 launch manus_dg5f_retarget retarget_only.launch.py hand_side:=right
 ```
+Replace `right` with `left` on terminals A and C for the left hand.
 
-Optional contact visualizer:
+Optional contact visualizer (right hand only for now):
 ```
 ros2 launch dg5f_contact_viz contact_viz.launch.py
 ```
@@ -124,10 +156,11 @@ ros2 launch dg5f_contact_viz contact_viz.launch.py
 
 ## 5. Tuning the retargeter
 
-All retargeter knobs live in a single yaml:
+Each hand has its own yaml, auto-loaded by the matching launch:
 
 ```
 ~/hand_ws/src/manus_glove/manus_dg5f_retarget/config/right_hand_calib.yaml
+~/hand_ws/src/manus_glove/manus_dg5f_retarget/config/left_hand_calib.yaml
 ```
 
 The launches above auto-load this file; you never pass `--params-file`

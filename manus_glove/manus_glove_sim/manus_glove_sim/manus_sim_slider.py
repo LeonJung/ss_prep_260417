@@ -63,16 +63,21 @@ def ergo_key(finger_label: str, row_label: str) -> str:
 
 
 class GlovePublisher(Node):
-    def __init__(self, topic: str, side: str, glove_id: int):
+    def __init__(self):
         super().__init__("manus_sim_slider")
-        self._side = side
-        self._glove_id = glove_id
+        self.declare_parameter("topic", "/manus_glove_1")
+        self.declare_parameter("side", "Right")
+        self.declare_parameter("glove_id", 1)
+        topic = self.get_parameter("topic").value
+        self._side = self.get_parameter("side").value
+        self._glove_id = int(self.get_parameter("glove_id").value)
         self._values: Dict[str, float] = {k: 0.0 for k in ERGO_KEYS}
         self._lock = threading.Lock()
         self._pub = self.create_publisher(ManusGlove, topic, 10)
         self._timer = self.create_timer(1.0 / 30.0, self._tick)
         self.get_logger().info(
-            f"manus_sim_slider: publishing to {topic} (side={side}, id={glove_id}) @ 30 Hz"
+            f"manus_sim_slider: publishing to {topic} "
+            f"(side={self._side}, id={self._glove_id}) @ 30 Hz"
         )
 
     def update(self, values: Dict[str, float]):
@@ -166,14 +171,12 @@ def _spin_ros(node: Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    topic = "/manus_glove_1"
-    side = "Right"
-    glove_id = 1
-    bridge = GlovePublisher(topic, side, glove_id)
+    bridge = GlovePublisher()
 
     app = QApplication(sys.argv)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     win = SliderGrid(bridge)
+    win.setWindowTitle(f"Manus Glove Sim — {bridge._side} (id {bridge._glove_id})")
     win.resize(820, 420)
     win.show()
 
