@@ -30,7 +30,7 @@ from .contact_modulation import ContactConfig, modulate
 from .ergo_map import (
     CALIB_DEFAULT, DIR_LEFT, DIR_RIGHT, ERGO_KEYS,
     POSTPROC_LEFT, POSTPROC_RIGHT,
-    compute_thumb_cmc_fixed, ergo_to_q0_rad,
+    compute_thumb_cmc, ergo_to_q0_rad,
 )
 from .retarget_ik import (
     AObjectiveConfig, AObjectiveWeights, solve_ik,
@@ -88,6 +88,8 @@ class ManusDg5fSotaRetargetA(Node):
         self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
 
         # Warm-start pipeline knobs (mirror manus_dg5f_retarget)
+        self.declare_parameter("thumb_cmc_mode", "fixed")    # fixed | coupled
+        self.declare_parameter("thumb_cmc_fixed_value_rad", 0.0)
         self.declare_parameter("thumb_cmc_offset_deg", 58.5)
         self.declare_parameter("thumb_cmc_gain_stretch", 1.0)
         self.declare_parameter("thumb_cmc_gain_spread", 0.0)
@@ -103,11 +105,14 @@ class ManusDg5fSotaRetargetA(Node):
         self.declare_parameter("w_orient", 0.3)
         self.declare_parameter("w_pinch", 4.0)
         self.declare_parameter("pinch_close_ref_m", 0.030)
-        self.declare_parameter("pinch_far_ref_m", 0.080)
+        self.declare_parameter("pinch_far_ref_m", 0.120)
         self.declare_parameter("pinch_target_min_m", 0.003)
         self.declare_parameter("pinch_rescale_k", 0.6)
-        self.declare_parameter("max_iter", 25)
-        self.declare_parameter("ftol", 1e-5)
+        self.declare_parameter("solver", "projgd")   # projgd | slsqp
+        self.declare_parameter("max_iter", 4)
+        self.declare_parameter("ftol", 1e-4)
+        self.declare_parameter("gtol", 1e-2)
+        self.declare_parameter("projgd_lr0", 0.003)
 
         # Rate
         self.declare_parameter("publish_rate_hz", 60.0)
@@ -134,6 +139,8 @@ class ManusDg5fSotaRetargetA(Node):
         self._out_topic = self.get_parameter("output_topic").value
         self._expected_side = str(self.get_parameter("expected_side").value).lower()
 
+        self._cmc_mode = str(self.get_parameter("thumb_cmc_mode").value).lower()
+        self._cmc_fixed = float(self.get_parameter("thumb_cmc_fixed_value_rad").value)
         self._cmc_offset = float(self.get_parameter("thumb_cmc_offset_deg").value)
         self._cmc_gain_stretch = float(self.get_parameter("thumb_cmc_gain_stretch").value)
         self._cmc_gain_spread = float(self.get_parameter("thumb_cmc_gain_spread").value)
@@ -160,8 +167,11 @@ class ManusDg5fSotaRetargetA(Node):
             pinch_rescale_k=float(self.get_parameter("pinch_rescale_k").value),
         )
         self._cfg = _build_cfg(self._side, urdf_path, weights)
+        self._cfg.solver = str(self.get_parameter("solver").value).lower()
         self._cfg.max_iter = int(self.get_parameter("max_iter").value)
         self._cfg.ftol = float(self.get_parameter("ftol").value)
+        self._cfg.gtol = float(self.get_parameter("gtol").value)
+        self._cfg.projgd_lr0 = float(self.get_parameter("projgd_lr0").value)
 
         self._max_step = float(self.get_parameter("max_step_per_tick_rad").value)
 
@@ -197,6 +207,7 @@ class ManusDg5fSotaRetargetA(Node):
         self.get_logger().info(
             f"manus_dg5f_sota_retarget_a[{self._side}]: {self._in_topic} -> {self._out_topic} "
             f"| urdf={os.path.basename(urdf_path)} "
+            f"| solver={self._cfg.solver} max_iter={self._cfg.max_iter} "
             f"| weights prior={weights.prior} vel={weights.velocity} "
             f"orient={weights.orient} pinch={weights.pinch} "
             f"| rate={rate:.0f} Hz"
@@ -239,9 +250,12 @@ class ManusDg5fSotaRetargetA(Node):
             return
         ergo = self._ergo_dict(msg)
 
-        cmc_rad = compute_thumb_cmc_fixed(
+
+        cmc_rad = compute_thumb_cmc(
+            mode=self._cmc_mode,
             spread_deg=float(ergo.get("ThumbMCPSpread", 0.0)),
             stretch_deg=float(ergo.get("ThumbMCPStretch", 0.0)),
+            fixed_value_rad=self._cmc_fixed,
             offset_deg=self._cmc_offset,
             gain_stretch=self._cmc_gain_stretch,
             gain_spread=self._cmc_gain_spread,
@@ -249,6 +263,7 @@ class ManusDg5fSotaRetargetA(Node):
         q0 = ergo_to_q0_rad(ergo, self._calib, self._dir, self._postproc, cmc_rad)
 
         q_opt, _info = solve_ik(self._cfg, q0, self._q_prev)
+
 
         # Per-tick step cap (smooth out SLSQP jumps when ergo changes fast).
         if self._q_prev is not None and self._max_step > 0.0:

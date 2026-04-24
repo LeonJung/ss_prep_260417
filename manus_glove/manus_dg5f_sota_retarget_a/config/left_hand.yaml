@@ -10,6 +10,8 @@
     joint_states_topic: /dg5f_left/joint_states
     contact_level_topic: /dg5f_left/contact_level
 
+    thumb_cmc_mode: fixed
+    thumb_cmc_fixed_value_rad: 0.0
     thumb_cmc_offset_deg: 58.5
     thumb_cmc_gain_stretch: 1.0
     thumb_cmc_gain_spread: 0.0
@@ -32,14 +34,17 @@
     w_pinch: 4.0
 
     pinch_close_ref_m: 0.030
-    pinch_far_ref_m: 0.080
+    pinch_far_ref_m: 0.120
     pinch_target_min_m: 0.003
     pinch_rescale_k: 0.6
 
-    max_iter: 25
-    ftol: 1.0e-5
+    solver: "projgd"
+    max_iter: 4
+    ftol: 1.0e-4
+    gtol: 1.0e-2
+    projgd_lr0: 0.003
 
-    publish_rate_hz: 60.0
+    publish_rate_hz: 30.0
     max_step_per_tick_rad: 0.12
 
     contact_aware: false

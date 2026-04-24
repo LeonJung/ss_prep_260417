@@ -126,10 +126,30 @@ def ergo_to_q0_rad(
     return q0
 
 
+def compute_thumb_cmc(mode: str, spread_deg: float, stretch_deg: float,
+                      fixed_value_rad: float = 0.0,
+                      offset_deg: float = 58.5,
+                      gain_stretch: float = 1.0,
+                      gain_spread: float = 0.0) -> float:
+    """Resolve thumb CMC in radians.
+
+    Mirrors manus_dg5f_retarget.thumb_cmc_modes:
+      - "fixed"   : constant `fixed_value_rad`. Matches original's default.
+      - "coupled" : offset - gain_stretch*stretch + gain_spread*spread (deg).
+    Callers apply the per-hand sign on the result.
+    """
+    if mode == "coupled":
+        val_deg = offset_deg - gain_stretch * stretch_deg + gain_spread * spread_deg
+        return val_deg * DEG
+    return float(fixed_value_rad)
+
+
+# Back-compat shim: the earlier implementation only had the linear formula.
 def compute_thumb_cmc_fixed(spread_deg: float, stretch_deg: float,
                             offset_deg: float = 58.5,
                             gain_stretch: float = 1.0,
                             gain_spread: float = 0.0) -> float:
-    """CMC 'fixed' mode — returns positive radians (callers apply side sign)."""
-    val_deg = offset_deg - gain_stretch * stretch_deg + gain_spread * spread_deg
-    return val_deg * DEG
+    return compute_thumb_cmc("coupled", spread_deg, stretch_deg,
+                             offset_deg=offset_deg,
+                             gain_stretch=gain_stretch,
+                             gain_spread=gain_spread)

@@ -13,6 +13,11 @@
     contact_level_topic: /dg5f_right/contact_level
 
     # --- Warm-start pipeline (mirrors manus_dg5f_retarget) ---
+    # thumb CMC modes (Manus doesn't give thumb abduction directly):
+    #   fixed   : constant thumb_cmc_fixed_value_rad (safest; matches old node)
+    #   coupled : offset - gain_stretch*MCPStretch + gain_spread*MCPSpread (deg)
+    thumb_cmc_mode: fixed
+    thumb_cmc_fixed_value_rad: 0.0
     thumb_cmc_offset_deg: 58.5
     thumb_cmc_gain_stretch: 1.0
     thumb_cmc_gain_spread: 0.0
@@ -40,14 +45,22 @@
     w_pinch: 4.0
 
     pinch_close_ref_m: 0.030      # below this ref distance -> full pinch weight
-    pinch_far_ref_m: 0.080        # above this ref distance -> zero pinch weight
+    pinch_far_ref_m: 0.120        # above this ref distance -> zero pinch weight
     pinch_target_min_m: 0.003     # closed pinch gap the robot aims for
     pinch_rescale_k: 0.6          # target interpolation from min towards ref
 
-    max_iter: 25
-    ftol: 1.0e-5
+    # Solver: "projgd" is the default fast path (projected grad-descent +
+    # Armijo-lite). "slsqp" is accurate but ~3-5x slower and only needed for
+    # offline analysis. max_iter=6 is enough for projgd to reach ~5 mm pinch.
+    solver: "projgd"
+    max_iter: 4
+    ftol: 1.0e-4                  # slsqp only
+    gtol: 1.0e-2                  # projgd early-exit on |grad|
+    projgd_lr0: 0.003             # initial step; halved when obj rises
 
-    publish_rate_hz: 60.0
+    publish_rate_hz: 30.0         # projgd typically 15-25 ms per tick; 30 Hz
+                                  # is comfortable. Raise to 60 Hz if you
+                                  # drop max_iter to 3 (pinch worsens to ~15 mm).
     max_step_per_tick_rad: 0.12   # safety cap on per-tick joint step
 
     # --- (b) contact-aware modulation (off by default) ---

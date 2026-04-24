@@ -162,20 +162,17 @@ def jacobian_tip_pos(chain: FingerChain, q: np.ndarray,
 
 def jacobian_tip_dir(chain: FingerChain, q: np.ndarray,
                      fk: Dict[str, np.ndarray] | None = None) -> np.ndarray:
-    """(3, 4) d tip_dir / d q. Derived from d(R_end @ v_0) / dq, with v_0 the
-    unit tip_offset. For unit input that's just axis_world × (R_end @ v_0)."""
+    """(3, 4) d tip_dir / d q. d(R_end @ v_0)/dq_i = axis_world_i × (R_end @ v_0),
+    where axis_world_i = R_{0..i-1} @ axes[i]. R_{0..i-1} is exactly
+    fk["joint_R"][i] already cached by fk_finger — reuse it instead of
+    recomputing rodrigues in a loop."""
     if fk is None:
         fk = fk_finger(chain, q)
     offset_n = chain.tip_offset / (np.linalg.norm(chain.tip_offset) or 1.0)
+    end_offset = fk["R_end"] @ offset_n  # world tip-direction (unit)
     J = np.zeros((3, 4))
-    R = np.eye(3)
+    jR = fk["joint_R"]
     for i in range(4):
-        # world axis BEFORE joint i's rotation
-        axis_world = R @ chain.axes[i]
-        # rotated tip-direction AFTER all joints (constant across i but depends only on R_end)
-        # But tip_dir changes as we apply rotations from i..3. We need derivative
-        # w.r.t. q_i: axis_world_i × (R_end @ offset_n), where axis_world_i is
-        # expressed in the frame BEFORE joint i (which is what R is).
-        J[:, i] = np.cross(axis_world, fk["R_end"] @ offset_n)
-        R = R @ _rodrigues(chain.axes[i], float(q[i]))
+        axis_world = jR[i] @ chain.axes[i]
+        J[:, i] = np.cross(axis_world, end_offset)
     return J
