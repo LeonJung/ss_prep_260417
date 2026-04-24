@@ -87,12 +87,24 @@ class ManusDg5fSotaRetargetA(Node):
         self.declare_parameter("joint_states_topic", "/dg5f_right/joint_states")
         self.declare_parameter("contact_level_topic", "/dg5f_right/contact_level")
 
-        # Warm-start pipeline knobs (mirror manus_dg5f_retarget)
-        self.declare_parameter("thumb_cmc_mode", "fixed")    # fixed | coupled
+        # Warm-start pipeline knobs (mirror manus_dg5f_retarget).
+        # Default is "coupled" so the thumb CMC follows the user's glove
+        # ThumbMCPSpread — critical for reaching ring/pinky on DG5F where the
+        # thumb has to swing laterally. At spread=stretch=0 with offset=0 the
+        # output is still 0 rad, so tip-to-tip grips are unaffected.
+        self.declare_parameter("thumb_cmc_mode", "coupled")   # fixed | coupled
         self.declare_parameter("thumb_cmc_fixed_value_rad", 0.0)
-        self.declare_parameter("thumb_cmc_offset_deg", 58.5)
-        self.declare_parameter("thumb_cmc_gain_stretch", 1.0)
-        self.declare_parameter("thumb_cmc_gain_spread", 0.0)
+        self.declare_parameter("thumb_cmc_offset_deg", 0.0)
+        self.declare_parameter("thumb_cmc_gain_stretch", 0.2)
+        self.declare_parameter("thumb_cmc_gain_spread", 1.0)
+
+        # Grip mode. "tiptotip" = fingertip-to-fingertip pinch (precision);
+        # "pad" = pad pinch / lateral grip (key, card). "pad" auto-enables
+        # allow_dip_extension and shrinks pinch_finger_frac so the contact
+        # point moves proximally from the nail tip.
+        self.declare_parameter("grip_mode", "tiptotip")       # tiptotip | pad
+        self.declare_parameter("allow_dip_extension", False)
+        self.declare_parameter("pinch_finger_frac", 1.0)
         self.declare_parameter("calib", CALIB_DEFAULT)
         self.declare_parameter("dir_sign", [float(s) for s in DIR_RIGHT.tolist()])
 
@@ -104,8 +116,11 @@ class ManusDg5fSotaRetargetA(Node):
         self.declare_parameter("w_velocity", 0.2)
         self.declare_parameter("w_orient", 0.3)
         self.declare_parameter("w_pinch", 4.0)
-        self.declare_parameter("pinch_close_ref_m", 0.030)
-        self.declare_parameter("pinch_far_ref_m", 0.120)
+        # Per-pair (thumb↔index/middle/ring/pinky). Scalars also accepted and
+        # broadcast to length 4 so old configs still load.
+        self.declare_parameter("pinch_close_ref_m", [0.030, 0.030, 0.040, 0.050])
+        self.declare_parameter("pinch_far_ref_m", [0.100, 0.120, 0.180, 0.220])
+        self.declare_parameter("pinch_weight_per_pair", [1.0, 1.0, 1.5, 1.8])
         self.declare_parameter("pinch_target_min_m", 0.003)
         self.declare_parameter("pinch_rescale_k", 0.6)
         self.declare_parameter("solver", "projgd")   # projgd | slsqp
@@ -145,6 +160,23 @@ class ManusDg5fSotaRetargetA(Node):
         self._cmc_gain_stretch = float(self.get_parameter("thumb_cmc_gain_stretch").value)
         self._cmc_gain_spread = float(self.get_parameter("thumb_cmc_gain_spread").value)
 
+        # Grip mode + DIP extension policy. We read allow_dip_extension /
+        # pinch_finger_frac as yaml overrides, but if the user chose pad mode
+        # and left those at the declare-defaults (False / 1.0 → tiptotip
+        # values), flip them to pad defaults so a bare
+        # `grip_mode:=pad` override on the CLI Just Works.
+        self._grip_mode = str(self.get_parameter("grip_mode").value).lower()
+        if self._grip_mode not in ("tiptotip", "pad"):
+            raise ValueError(f"grip_mode must be tiptotip|pad, got {self._grip_mode!r}")
+        raw_allow = bool(self.get_parameter("allow_dip_extension").value)
+        raw_frac = float(self.get_parameter("pinch_finger_frac").value)
+        if self._grip_mode == "pad":
+            self._allow_dip_extension = True if not raw_allow else raw_allow
+            self._pinch_finger_frac = 0.4 if abs(raw_frac - 1.0) < 1e-6 else raw_frac
+        else:
+            self._allow_dip_extension = raw_allow
+            self._pinch_finger_frac = raw_frac
+
         self._calib = np.array([float(x) for x in self.get_parameter("calib").value], dtype=float)
         self._dir = np.array([float(x) for x in self.get_parameter("dir_sign").value], dtype=float)
         if self._calib.size != 20 or self._dir.size != 20:
@@ -156,15 +188,29 @@ class ManusDg5fSotaRetargetA(Node):
         if not os.path.exists(urdf_path):
             raise FileNotFoundError(f"URDF not found: {urdf_path}")
 
+        def _vec4(name):
+            raw = self.get_parameter(name).value
+            if isinstance(raw, (list, tuple)):
+                arr = np.asarray(raw, dtype=float)
+            else:
+                arr = np.full(4, float(raw))
+            if arr.size == 1:
+                arr = np.full(4, float(arr[0]))
+            if arr.size != 4:
+                raise ValueError(f"{name} must be length 4 (got {arr.size})")
+            return arr
+
         weights = AObjectiveWeights(
             prior=float(self.get_parameter("w_prior").value),
             velocity=float(self.get_parameter("w_velocity").value),
             orient=float(self.get_parameter("w_orient").value),
             pinch=float(self.get_parameter("w_pinch").value),
-            pinch_close_ref_m=float(self.get_parameter("pinch_close_ref_m").value),
-            pinch_far_ref_m=float(self.get_parameter("pinch_far_ref_m").value),
+            pinch_close_ref_m=_vec4("pinch_close_ref_m"),
+            pinch_far_ref_m=_vec4("pinch_far_ref_m"),
+            pinch_weight_per_pair=_vec4("pinch_weight_per_pair"),
             pinch_target_min_m=float(self.get_parameter("pinch_target_min_m").value),
             pinch_rescale_k=float(self.get_parameter("pinch_rescale_k").value),
+            pinch_finger_frac=self._pinch_finger_frac,
         )
         self._cfg = _build_cfg(self._side, urdf_path, weights)
         self._cfg.solver = str(self.get_parameter("solver").value).lower()
@@ -206,6 +252,8 @@ class ManusDg5fSotaRetargetA(Node):
 
         self.get_logger().info(
             f"manus_dg5f_sota_retarget_a[{self._side}]: {self._in_topic} -> {self._out_topic} "
+            f"| grip={self._grip_mode} dip_ext={self._allow_dip_extension} "
+            f"frac={self._pinch_finger_frac:.2f} "
             f"| urdf={os.path.basename(urdf_path)} "
             f"| solver={self._cfg.solver} max_iter={self._cfg.max_iter} "
             f"| weights prior={weights.prior} vel={weights.velocity} "
@@ -260,7 +308,8 @@ class ManusDg5fSotaRetargetA(Node):
             gain_stretch=self._cmc_gain_stretch,
             gain_spread=self._cmc_gain_spread,
         )
-        q0 = ergo_to_q0_rad(ergo, self._calib, self._dir, self._postproc, cmc_rad)
+        q0 = ergo_to_q0_rad(ergo, self._calib, self._dir, self._postproc,
+                            cmc_rad, allow_dip_extension=self._allow_dip_extension)
 
         q_opt, _info = solve_ik(self._cfg, q0, self._q_prev)
 

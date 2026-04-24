@@ -14,7 +14,7 @@ sys.path.insert(0, ROOT)
 
 from manus_dg5f_sota_retarget_a.ergo_map import (  # noqa: E402
     CALIB_DEFAULT, DIR_RIGHT, POSTPROC_RIGHT,
-    compute_thumb_cmc_fixed, ergo_to_q0_rad,
+    compute_thumb_cmc, ergo_to_q0_rad,
 )
 from manus_dg5f_sota_retarget_a.retarget_ik import (  # noqa: E402
     AObjectiveConfig, AObjectiveWeights, solve_ik,
@@ -88,8 +88,9 @@ class SimSweepTest(unittest.TestCase):
 
         for t in ts:
             ergo = _ergo_pinch(t)
-            cmc = compute_thumb_cmc_fixed(ergo["ThumbMCPSpread"],
-                                          ergo["ThumbMCPStretch"])
+            cmc = compute_thumb_cmc("coupled",
+                                    ergo["ThumbMCPSpread"], ergo["ThumbMCPStretch"],
+                                    offset_deg=0.0, gain_stretch=0.2, gain_spread=1.0)
             q0 = ergo_to_q0_rad(ergo, calib, DIR_RIGHT, POSTPROC_RIGHT, cmc)
             q_opt, _ = solve_ik(cfg, q0, q_prev=q_prev)
 

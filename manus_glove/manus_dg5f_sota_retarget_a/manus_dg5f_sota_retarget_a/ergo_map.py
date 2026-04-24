@@ -97,17 +97,23 @@ def raw_to_joint_deg(q_deg: List[float]) -> List[float]:
     return qd
 
 
+DIP_SLOTS = (3, 7, 11, 15, 19)  # last joint of each finger chain
+
+
 def ergo_to_q0_rad(
     ergo: Dict[str, float],
     calib: np.ndarray,
     dir_sign: np.ndarray,
     postproc: Dict[int, str],
     thumb_cmc_rad: float,
+    allow_dip_extension: bool = False,
 ) -> np.ndarray:
     """Apply raw_to_joint_deg + calib + dir + postprocess. Returns q0 in rad.
 
-    Mirrors manus_dg5f_retarget.retarget_node but without the CMC computation
-    (passed in) and without URDF clamping (that becomes the SLSQP bound).
+    When `allow_dip_extension=True`, POSTPROC rules are skipped for the five
+    DIP slots (3/7/11/15/19). That unlocks backward-bend DIP poses needed for
+    lateral / pad pinches (e.g. key grip: index DIP slightly extended while
+    MCP and PIP are flexed). URDF joint limits still clamp downstream.
     """
     q_deg = [float(ergo.get(k, 0.0)) for k in ERGO_KEYS]
     qd_deg = raw_to_joint_deg(q_deg)
@@ -118,6 +124,8 @@ def ergo_to_q0_rad(
     q0[0] = thumb_cmc_rad * dir_sign[0]
     for i, rule in postproc.items():
         if rule == "skip":
+            continue
+        if allow_dip_extension and i in DIP_SLOTS:
             continue
         if rule == "no_positive" and q0[i] > 0.0:
             q0[i] = 0.0

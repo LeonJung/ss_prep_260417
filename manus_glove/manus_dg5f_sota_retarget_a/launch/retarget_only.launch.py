@@ -17,14 +17,18 @@ def generate_launch_description():
     declared = [
         DeclareLaunchArgument("hand_side", default_value="right",
                               description="right | left"),
+        DeclareLaunchArgument("grip_mode", default_value="tiptotip",
+                              description="tiptotip | pad"),
         DeclareLaunchArgument("contact_aware", default_value="false",
                               description="true | false — enable (b)-layer"),
     ]
     hand_side = LaunchConfiguration("hand_side")
+    grip_mode = LaunchConfiguration("grip_mode")
     contact_aware = LaunchConfiguration("contact_aware")
 
+    # Pick {right,left}_hand[_pad].yaml based on hand_side + grip_mode.
     yaml_name = PythonExpression([
-        '"right_hand.yaml" if "', hand_side, '" == "right" else "left_hand.yaml"'
+        '"', hand_side, '_hand" + ("_pad" if "', grip_mode, '" == "pad" else "") + ".yaml"'
     ])
     cfg_yaml = PathJoinSubstitution([
         FindPackageShare("manus_dg5f_sota_retarget_a"), "config", yaml_name

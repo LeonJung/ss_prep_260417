@@ -1,23 +1,18 @@
-# DG5F right-hand SOTA retargeting (A-base) — tip-to-tip grip mode.
-# Optimises toward fingertip-to-fingertip pinch (precision grip). Use
-# right_hand_pad.yaml for key / pad grips that need DIP extension.
+# DG5F right-hand SOTA retargeting (A-base) — pad / lateral grip mode.
+# DIP joints may extend backward; pinch target point is shifted proximally
+# (40 % along distal phalanx from DIP joint) so the thumb pad meets the side
+# of the finger rather than the nail tip. Ideal for key / card / thin-flat
+# object grips.
 
 /**:
   ros__parameters:
     hand_side: right
     input_topic: /manus_glove_1
     output_topic: /dg5f_right/rj_dg_pospid/reference
-    expected_side: right                              # right | left | any
+    expected_side: right
     joint_states_topic: /dg5f_right/joint_states
     contact_level_topic: /dg5f_right/contact_level
 
-    # --- Warm-start pipeline (mirrors manus_dg5f_retarget) ---
-    # thumb CMC modes (Manus doesn't publish thumb abduction directly):
-    #   fixed   : constant thumb_cmc_fixed_value_rad (old behaviour)
-    #   coupled : offset - gain_stretch*MCPStretch + gain_spread*MCPSpread (deg)
-    # Default is coupled with offset=0, so at glove-rest CMC=0 (matches old
-    # fixed-0.0 output) but the user's thumb spread naturally moves CMC,
-    # which is required for reaching ring/pinky in a pinch.
     thumb_cmc_mode: coupled
     thumb_cmc_fixed_value_rad: 0.0
     thumb_cmc_offset_deg: 0.0
@@ -35,22 +30,18 @@
                -1.0,  1.0,  1.0,  1.0,
                 1.0, -1.0,  1.0,  1.0]
 
-    # --- Grip mode (tip-to-tip) ---
-    grip_mode: tiptotip
-    allow_dip_extension: false
-    pinch_finger_frac: 1.0        # 1.0 = fingertip
+    # --- Grip mode (pad / lateral) ---
+    grip_mode: pad
+    allow_dip_extension: true     # DIP can bend backward (key grip posture)
+    pinch_finger_frac: 0.4        # 0 = DIP joint, 1 = tip; 0.4 ≈ pad contact
 
-    # --- URDF (empty = auto via dg5f_description share) ---
     urdf_path: ""
 
-    # --- A-objective weights ---
     w_prior: 1.0
     w_velocity: 0.2
     w_orient: 0.3
     w_pinch: 4.0
 
-    # Per-pair (thumb↔index/middle/ring/pinky). Wider range on ring/pinky so
-    # their sigmoid activates despite the larger baseline tip distance.
     pinch_close_ref_m: [0.030, 0.030, 0.040, 0.050]
     pinch_far_ref_m:   [0.100, 0.120, 0.180, 0.220]
     pinch_weight_per_pair: [1.0, 1.0, 1.5, 1.8]
@@ -66,7 +57,6 @@
     publish_rate_hz: 30.0
     max_step_per_tick_rad: 0.12
 
-    # --- (b) contact-aware modulation (off by default) ---
     contact_aware: false
     contact_c_lo: 0.30
     contact_c_hi: 0.80

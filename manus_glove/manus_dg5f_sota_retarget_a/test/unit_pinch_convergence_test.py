@@ -12,8 +12,15 @@ sys.path.insert(0, ROOT)
 
 from manus_dg5f_sota_retarget_a.ergo_map import (  # noqa: E402
     CALIB_DEFAULT, DIR_RIGHT, POSTPROC_RIGHT,
-    compute_thumb_cmc_fixed, ergo_to_q0_rad,
+    compute_thumb_cmc, ergo_to_q0_rad,
 )
+
+
+def _default_cmc():
+    """Match retarget_node's default coupled-mode CMC (offset=0, gain_stretch=0.2,
+    gain_spread=1.0). At ergo rest (stretch=0, spread=0) -> 0 rad."""
+    return compute_thumb_cmc("coupled", 0.0, 0.0,
+                             offset_deg=0.0, gain_stretch=0.2, gain_spread=1.0)
 from manus_dg5f_sota_retarget_a.retarget_ik import (  # noqa: E402
     AObjectiveConfig, AObjectiveWeights, solve_ik,
 )
@@ -63,8 +70,9 @@ class PinchConvergenceTest(unittest.TestCase):
             "IndexMCPStretch": 55.0, "IndexPIPStretch": 55.0,
             "IndexDIPStretch": 25.0,
         }
-        cmc = compute_thumb_cmc_fixed(ergo["ThumbMCPSpread"],
-                                      ergo["ThumbMCPStretch"])
+        cmc = compute_thumb_cmc("coupled",
+                                ergo["ThumbMCPSpread"], ergo["ThumbMCPStretch"],
+                                offset_deg=0.0, gain_stretch=0.2, gain_spread=1.0)
         q0 = ergo_to_q0_rad(ergo, calib, DIR_RIGHT, POSTPROC_RIGHT, cmc)
         d_baseline = _tip_distance(cfg, q0, 1)
 
@@ -90,11 +98,12 @@ class PinchConvergenceTest(unittest.TestCase):
             "RingSpread", "RingMCPStretch", "RingPIPStretch", "RingDIPStretch",
             "PinkySpread", "PinkyMCPStretch", "PinkyPIPStretch", "PinkyDIPStretch",
         )}
-        cmc = compute_thumb_cmc_fixed(0.0, 0.0)
+        cmc = _default_cmc()
         q0 = ergo_to_q0_rad(ergo, calib, DIR_RIGHT, POSTPROC_RIGHT, cmc)
         q0_clip = np.clip(q0, cfg.bounds_lo, cfg.bounds_hi)
         q_opt, _ = solve_ik(cfg, q0, q_prev=q0)
-        # prior pins us to q0_clip; drift from clipped q0 should be negligible.
+        # With coupled-mode CMC=0 at rest, thumb tip sits ~210 mm from finger
+        # tips -> all pinch sigmoids are zero -> optimizer stays at q0_clip.
         self.assertLess(np.linalg.norm(q_opt - q0_clip), 0.05,
                         msg=f"open-hand q drifted from q0_clip: "
                             f"{np.linalg.norm(q_opt - q0_clip):.3f} rad")

@@ -1,5 +1,5 @@
-# DG5F left-hand SOTA retargeting (A-base) — tip-to-tip grip mode.
-# Mirror of right_hand.yaml. Use left_hand_pad.yaml for pad grips.
+# DG5F left-hand SOTA retargeting (A-base) — pad / lateral grip mode.
+# Mirror of right_hand_pad.yaml.
 
 /**:
   ros__parameters:
@@ -27,9 +27,9 @@
                 1.0,  1.0,  1.0,  1.0,
                -1.0,  1.0,  1.0,  1.0]
 
-    grip_mode: tiptotip
-    allow_dip_extension: false
-    pinch_finger_frac: 1.0
+    grip_mode: pad
+    allow_dip_extension: true
+    pinch_finger_frac: 0.4
 
     urdf_path: ""
 

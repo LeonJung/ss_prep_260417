@@ -56,10 +56,11 @@ class ObjectiveGradTest(unittest.TestCase):
 
         # reference FK for pinch/orient terms
         from manus_dg5f_sota_retarget_a.retarget_ik import _fk_all  # type: ignore
-        _, tips_ref, dirs_ref = _fk_all(cfg.finger_chains, q0)
+        frac = cfg.weights.pinch_finger_frac
+        _, tips_ref, dirs_ref, pps_ref = _fk_all(cfg.finger_chains, q0, pinch_frac=frac)
         d_refs = np.zeros(5)
         for fi in range(1, 5):
-            d_refs[fi] = float(np.linalg.norm(tips_ref[0] - tips_ref[fi]))
+            d_refs[fi] = float(np.linalg.norm(pps_ref[0] - pps_ref[fi]))
 
         q = q0 + rng.normal(0, 0.05, 20)
         q = np.clip(q, cfg.bounds_lo, cfg.bounds_hi)
