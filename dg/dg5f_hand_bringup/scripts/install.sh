@@ -49,6 +49,8 @@ if [[ "$SKIP_APT" != "1" ]]; then
     python3-pyqt5
     python3-empy                              # URDF/xacro templating (ROS build-time)
     python3-lark                              # rosidl parser (ROS build-time)
+    python3-numpy                             # SOTA retargeters (FK/IK matrices)
+    python3-scipy                             # manus_dg5f_sota_retarget_a SLSQP
     python3-colcon-common-extensions
     python3-vcstool
     python3-rosdep

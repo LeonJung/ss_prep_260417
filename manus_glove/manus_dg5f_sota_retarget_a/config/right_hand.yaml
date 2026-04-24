@@ -1,0 +1,58 @@
+# DG5F right-hand SOTA retargeting (A-base).
+# Starts from ergo-mapped q0 (same pipeline as manus_dg5f_retarget), then
+# runs SLSQP with the paper's 4-term objective (prior + velocity + fingertip
+# orientation + sigmoid-switched pinch) solved against dg5f_right.urdf.
+
+/**:
+  ros__parameters:
+    hand_side: right
+    input_topic: /manus_glove_1
+    output_topic: /dg5f_right/rj_dg_pospid/reference
+    expected_side: right                              # right | left | any
+    joint_states_topic: /dg5f_right/joint_states
+    contact_level_topic: /dg5f_right/contact_level
+
+    # --- Warm-start pipeline (mirrors manus_dg5f_retarget) ---
+    thumb_cmc_offset_deg: 58.5
+    thumb_cmc_gain_stretch: 1.0
+    thumb_cmc_gain_spread: 0.0
+    calib: [1.0, 1.6, 1.3, 1.3,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.0, 1.0]
+    dir_sign: [ 1.0, -1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0,
+                1.0, -1.0,  1.0,  1.0]
+
+    # --- URDF (empty = auto via dg5f_description share) ---
+    urdf_path: ""
+
+    # --- A-objective weights ---
+    # Larger w_prior keeps outputs close to the ergo mapping (safe default).
+    # w_pinch dominates when the human fingertip distance drops below
+    # pinch_close_ref_m; w_orient preserves finger bending direction.
+    w_prior: 1.0
+    w_velocity: 0.2
+    w_orient: 0.3
+    w_pinch: 4.0
+
+    pinch_close_ref_m: 0.030      # below this ref distance -> full pinch weight
+    pinch_far_ref_m: 0.080        # above this ref distance -> zero pinch weight
+    pinch_target_min_m: 0.003     # closed pinch gap the robot aims for
+    pinch_rescale_k: 0.6          # target interpolation from min towards ref
+
+    max_iter: 25
+    ftol: 1.0e-5
+
+    publish_rate_hz: 60.0
+    max_step_per_tick_rad: 0.12   # safety cap on per-tick joint step
+
+    # --- (b) contact-aware modulation (off by default) ---
+    contact_aware: false
+    contact_c_lo: 0.30
+    contact_c_hi: 0.80
+    contact_max_blend: 0.85
+    contact_velocity_clamp_rad_s: 1.5
