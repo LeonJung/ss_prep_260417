@@ -34,8 +34,20 @@ from manus_dg5f_sota_retarget_a.urdf_fk import (
 ABDUCTION_SLOTS = (0, 4, 8, 12, 16)
 TARGET_FRAC_FIST = 0.85   # fraction of urdf upper limit at fist
 
-CALIB_MIN = 0.4
-CALIB_MAX = 3.0
+# Absolute floor / ceiling on the new calib scalar. These are last-resort
+# guards; the per-joint relative cap (CALIB_MAX_REL_CHANGE) is what really
+# protects against runaway amplification when the user's fist capture is
+# weak (small delta -> calib computed huge).
+CALIB_MIN_ABS = 0.4
+CALIB_MAX_ABS = 2.0
+# Hard cap on |new_calib / old_calib|: must stay within [1/X, X]. Defaults
+# to 1.5 — a 50 % swing is plenty when the original yaml is already a
+# reasonable hand-tuned baseline.
+CALIB_MAX_REL_CHANGE_DEFAULT = 1.5
+# Joints whose open->fist delta is below this many radians are treated as
+# "didn't actually move" — calib is left untouched. Bigger threshold = more
+# joints get skipped (safer when the user's fist is weak).
+DELTA_FLOOR_DEFAULT = 0.20
 
 
 def _build_chains(urdf_path: str, side: str):
@@ -88,6 +100,9 @@ def _tip_distance(chains, q0: np.ndarray, finger_idx: int) -> float:
 def tune(cfg: Dict[str, Any], captures: Dict[str, Dict[str, float]],
          urdf_path: str, side: str,
          tip_target_m: float = 0.001, pad_target_m: float = 0.001,
+         max_calib_mult: float = CALIB_MAX_REL_CHANGE_DEFAULT,
+         delta_floor: float = DELTA_FLOOR_DEFAULT,
+         tune_calib: bool = True,
          verbose: bool = True) -> Dict[str, Any]:
     """Return a NEW cfg dict with calib[20] + pinch sigmoid bounds adjusted.
 
@@ -111,25 +126,38 @@ def tune(cfg: Dict[str, Any], captures: Dict[str, Dict[str, float]],
         print(f"  q0_fist thumb+idx: {q0_fist[:8].round(3).tolist()}")
 
     # --- per-joint calib adjustment ---
-    new_calib = list(map(float, cfg["calib"]))
-    for i in range(20):
-        if i == 0:
-            continue  # thumb CMC handled by mode/gains
-        if i in ABDUCTION_SLOTS:
-            # spread joints: target stays ~0 in both poses; skip auto-tune
-            continue
-        delta = q0_fist[i] - q0_open[i]
-        if abs(delta) < 0.10:
-            # joint barely moves — leave calib alone
-            continue
-        target_open = 0.0
-        target_fist = TARGET_FRAC_FIST * upper[i]
-        target_delta = target_fist - target_open
-        scale = target_delta / delta
-        # Adjustment is a multiplicative factor on the existing calib.
-        new_val = new_calib[i] * scale
-        new_val = float(np.clip(new_val, CALIB_MIN, CALIB_MAX))
-        new_calib[i] = new_val
+    old_calib = list(map(float, cfg["calib"]))
+    new_calib = list(old_calib)
+    skipped = []
+    if tune_calib:
+        for i in range(20):
+            if i == 0:
+                continue  # thumb CMC handled by mode/gains
+            if i in ABDUCTION_SLOTS:
+                continue  # spread stays ~0 in open and fist
+            delta = q0_fist[i] - q0_open[i]
+            if abs(delta) < delta_floor:
+                skipped.append((i, abs(delta)))
+                continue
+            target_open = 0.0
+            target_fist = TARGET_FRAC_FIST * upper[i]
+            target_delta = target_fist - target_open
+            scale_factor = target_delta / delta
+            ideal = old_calib[i] * scale_factor
+            # Per-joint relative cap: clip to [old/X, old*X].
+            rel_lo = old_calib[i] / max_calib_mult
+            rel_hi = old_calib[i] * max_calib_mult
+            capped = float(np.clip(ideal, rel_lo, rel_hi))
+            # Final absolute floor/ceiling.
+            capped = float(np.clip(capped, CALIB_MIN_ABS, CALIB_MAX_ABS))
+            new_calib[i] = capped
+        if verbose and skipped:
+            joints_str = ", ".join(f"slot {s} (|delta|={d:.2f})"
+                                    for (s, d) in skipped)
+            print(f"  skipped (delta < {delta_floor:.2f} rad): {joints_str}")
+    else:
+        if verbose:
+            print("  tune_calib=False -> calib[20] left at baseline")
     new_cfg["calib"] = new_calib
 
     # --- pinch sigmoid bounds[4] ---

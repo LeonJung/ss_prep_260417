@@ -182,6 +182,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--accept-any-side", action="store_true",
                    help="bypass the msg.side filter (use if your Manus driver "
                         "publishes side='' or a wrong value)")
+    p.add_argument("--max-calib-mult", type=float, default=1.5,
+                   help="hard cap on |new_calib / old_calib| per joint. "
+                        "Default 1.5 (max 50 %% deviation). Lower for "
+                        "conservative tuning if fingers cross-talk; raise "
+                        "if you need bigger range.")
+    p.add_argument("--delta-floor", type=float, default=0.20,
+                   help="joints whose open->fist q0-delta is below this many "
+                        "radians are skipped (default 0.20 rad ≈ 11°). "
+                        "Increase if a weak fist capture is producing wild "
+                        "calib values for joints that barely moved.")
+    p.add_argument("--no-tune-calib", action="store_true",
+                   help="skip per-joint calib[20] tuning; only update pinch "
+                        "sigmoid bounds + pinch_target_min_m. Use when the "
+                        "default calib was already good.")
     args = p.parse_args(argv)
 
     side = args.side
@@ -259,6 +273,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             new_cfg = tune(cfg, captures, urdf_path=urdf_path, side=side,
                            tip_target_m=args.tip_target_mm * 1e-3,
                            pad_target_m=args.pad_target_mm * 1e-3,
+                           max_calib_mult=args.max_calib_mult,
+                           delta_floor=args.delta_floor,
+                           tune_calib=not args.no_tune_calib,
                            verbose=True)
             save_params(out_yaml, new_cfg, src_path=cur_yaml_path)
             print(_c(f"  wrote {out_yaml}", GREEN))
