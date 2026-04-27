@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>manus_dg5f_sota_retargeting_a_good</name>
+  <version>0.0.1</version>
+  <description>
+    SOTA-retargeting "A" base: Manus glove (leader) -> Tesollo DG5F (follower)
+    via kinematic optimization with the comprehensive objective from
+    "Analyzing Key Objectives in Human-to-Robot Retargeting for Dexterous
+    Manipulation" (arXiv 2506.09384): thumb fingertip position, wrist-to-
+    fingertip vectors, sigmoid-switched pinch distance, fingertip orientation
+    (DIP -> tip), joint + velocity regularization. Solved with scipy SLSQP
+    against the DG5F URDF (parsed in-node, pure Python FK).
+  </description>
+  <maintainer email="jung.ryuwoon@gmail.com">jung</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>control_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>manus_ros2_msgs</depend>
+  <depend>python3-numpy</depend>
+  <depend>python3-scipy</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

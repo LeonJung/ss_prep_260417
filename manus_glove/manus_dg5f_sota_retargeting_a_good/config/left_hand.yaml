@@ -1,0 +1,54 @@
+# DG5F left-hand SOTA retargeting (A-base).
+# Mirror of right_hand.yaml.
+
+/**:
+  ros__parameters:
+    hand_side: left
+    input_topic: /manus_glove_0
+    output_topic: /dg5f_left/lj_dg_pospid/reference
+    expected_side: left
+    joint_states_topic: /dg5f_left/joint_states
+    contact_level_topic: /dg5f_left/contact_level
+
+    thumb_cmc_mode: fixed
+    thumb_cmc_fixed_value_rad: 0.0
+    thumb_cmc_offset_deg: 58.5
+    thumb_cmc_gain_stretch: 1.0
+    thumb_cmc_gain_spread: 0.0
+    calib: [1.0, 1.6, 1.3, 1.3,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.3, 1.7,
+            1.0, 1.0, 1.0, 1.0]
+    dir_sign: [-1.0,  1.0, -1.0, -1.0,
+                1.0,  1.0,  1.0,  1.0,
+                1.0,  1.0,  1.0,  1.0,
+                1.0,  1.0,  1.0,  1.0,
+               -1.0,  1.0,  1.0,  1.0]
+
+    urdf_path: ""
+
+    w_prior: 1.0
+    w_velocity: 0.2
+    w_orient: 0.3
+    w_pinch: 4.0
+
+    pinch_close_ref_m: 0.030
+    pinch_far_ref_m: 0.120
+    pinch_target_min_m: 0.003
+    pinch_rescale_k: 0.6
+
+    solver: "projgd"
+    max_iter: 4
+    ftol: 1.0e-4
+    gtol: 1.0e-2
+    projgd_lr0: 0.003
+
+    publish_rate_hz: 30.0
+    max_step_per_tick_rad: 0.12
+
+    contact_aware: false
+    contact_c_lo: 0.30
+    contact_c_hi: 0.80
+    contact_max_blend: 0.85
+    contact_velocity_clamp_rad_s: 1.5

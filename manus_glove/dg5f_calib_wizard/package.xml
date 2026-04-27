@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dg5f_calib_wizard</name>
+  <version>0.0.1</version>
+  <description>
+    Interactive CLI wizard that calibrates manus_dg5f_sota_retarget_a yaml
+    parameters by walking the user through a small set of canonical hand
+    poses (open / fist / tip pinches / pad pinches), recording Manus glove
+    ergonomics for each, and computing per-joint calib + per-pair pinch
+    sigmoid bounds so the resulting retargeting reaches a configurable pinch
+    target distance (default 1 mm). Lite v1: tunes calib[20] and
+    pinch_close/far_ref_m[4]; thumb CMC gains and pinch_finger_frac are left
+    for manual tweaks.
+  </description>
+  <maintainer email="jung.ryuwoon@gmail.com">jung</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>manus_ros2_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>manus_dg5f_sota_retarget_a</depend>
+  <depend>python3-numpy</depend>
+  <depend>python3-yaml</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
