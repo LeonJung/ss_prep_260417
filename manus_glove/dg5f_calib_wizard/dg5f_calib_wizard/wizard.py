@@ -26,6 +26,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from ament_index_python.packages import get_package_share_directory
 from manus_ros2_msgs.msg import ManusGlove
@@ -51,21 +52,45 @@ def _c(s: str, *codes: str) -> str:
 
 # ------ ROS2 capture node ------
 class CaptureNode(Node):
-    def __init__(self, topic: str, expected_side: str):
+    def __init__(self, topic: str, expected_side: str, accept_any_side: bool = False):
         super().__init__("calib_wizard")
+        self._topic = topic
         self._expected = expected_side.lower()
+        self._accept_any = accept_any_side
         self._buf: List[ManusGlove] = []
-        self._cap = self.create_subscription(ManusGlove, topic, self._on_glove, 50)
+        self._raw_count = 0    # all msgs received
+        self._sides_seen = {}  # what msg.side values we've actually seen
+
+        # Use BEST_EFFORT to match the most common Manus driver QoS. A
+        # BEST_EFFORT subscriber is compatible with both RELIABLE and
+        # BEST_EFFORT publishers; the reverse (RELIABLE sub + BEST_EFFORT
+        # pub) silently drops everything, which is exactly the failure
+        # mode we want to avoid.
+        qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                         history=HistoryPolicy.KEEP_LAST,
+                         depth=50)
+        self._cap = self.create_subscription(ManusGlove, topic, self._on_glove, qos)
         self.get_logger().info(
-            f"calib_wizard subscribed to {topic} (expected side={self._expected})")
+            f"calib_wizard subscribed to {topic} "
+            f"(expected side={self._expected!r}, accept_any={accept_any_side}, "
+            f"reliability=BEST_EFFORT)")
 
     def _on_glove(self, msg: ManusGlove):
+        self._raw_count += 1
         side = (msg.side or "").lower()
-        if side and side != self._expected:
+        self._sides_seen[side] = self._sides_seen.get(side, 0) + 1
+        if not self._accept_any and side and side != self._expected:
             return
         self._buf.append(msg)
         if len(self._buf) > 200:
             self._buf = self._buf[-200:]
+
+    def diagnostic(self) -> str:
+        return (
+            f"raw_msgs={self._raw_count}, accepted={len(self._buf)}, "
+            f"sides_seen={self._sides_seen}, topic={self._topic}, "
+            f"expected_side={self._expected!r}"
+        )
 
     def reset_buffer(self):
         self._buf = []
@@ -76,14 +101,18 @@ class CaptureNode(Node):
     def collect(self, n_frames: int, timeout_s: float = 5.0) -> Dict[str, float]:
         """Return averaged ergo dict over the next `n_frames` glove messages."""
         self.reset_buffer()
+        raw_at_start = self._raw_count
         t0 = time.time()
         while len(self._buf) < n_frames:
             rclpy.spin_once(self, timeout_sec=0.05)
             if time.time() - t0 > timeout_s:
                 break
         if len(self._buf) < 5:
+            raw_seen = self._raw_count - raw_at_start
             raise TimeoutError(
-                f"only got {len(self._buf)} glove frames in {timeout_s:.1f} s")
+                f"only got {len(self._buf)} accepted glove frames in {timeout_s:.1f} s "
+                f"(raw msgs received in window: {raw_seen}). {self.diagnostic()}"
+            )
         # Average ergonomics across captured msgs.
         keys: set = set()
         for m in self._buf:
@@ -150,6 +179,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="pad-to-pad pinch closure target (mm)")
     p.add_argument("--urdf-path", default=None,
                    help="override URDF path (default: dg5f_description share)")
+    p.add_argument("--accept-any-side", action="store_true",
+                   help="bypass the msg.side filter (use if your Manus driver "
+                        "publishes side='' or a wrong value)")
     args = p.parse_args(argv)
 
     side = args.side
@@ -185,14 +217,32 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     rclpy.init()
     try:
-        node = CaptureNode(f"/manus_glove_{glove_id}", side)
+        node = CaptureNode(f"/manus_glove_{glove_id}", side,
+                           accept_any_side=args.accept_any_side)
         # Brief warm-up so the subscription has a chance to receive data.
-        for _ in range(20):
+        for _ in range(40):
             rclpy.spin_once(node, timeout_sec=0.05)
-        if node.latest_count() == 0:
+        if node._raw_count == 0:
             print(_c(
-                f"WARN: no /manus_glove_{glove_id} messages seen yet. "
-                "Check that the driver is running and side matches.", YELLOW))
+                f"WARN: zero /manus_glove_{glove_id} messages seen during 2-s "
+                "warmup.", YELLOW))
+            print(_c("  Diagnostic checks:", YELLOW))
+            print(_c(
+                f"    ros2 topic hz /manus_glove_{glove_id}\n"
+                f"    ros2 topic info -v /manus_glove_{glove_id}\n"
+                f"    ros2 topic echo --once /manus_glove_{glove_id}", DIM))
+        elif len(node._buf) == 0 and node._raw_count > 0:
+            print(_c(
+                f"WARN: {node._raw_count} raw msgs seen but 0 accepted by "
+                f"side filter (expected {side!r}).", YELLOW))
+            print(_c(f"  Sides observed: {node._sides_seen}", YELLOW))
+            print(_c(
+                "  Re-run with --accept-any-side to skip the side filter.",
+                YELLOW))
+        else:
+            print(_c(
+                f"  glove warmup OK: {node._raw_count} msgs, "
+                f"sides_seen={node._sides_seen}", DIM))
 
         cur_yaml_path = in_yaml
         for it in range(1, args.iterations + 1):
