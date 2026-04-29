@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>manus_dg5f_grasp_mode</name>
+  <version>0.0.1</version>
+  <description>Mux Manus glove ↔ DG5F retargeter output through preset grasp modes from dg5f_mujoco_sim/config/grasp_modes_&lt;side&gt;.yaml.</description>
+  <maintainer email="jung.ryuwoon@gmail.com">LeonJung</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <exec_depend>manus_ros2_msgs</exec_depend>
+  <exec_depend>manus_dg5f_retarget</exec_depend>
+  <exec_depend>dg5f_mujoco_sim</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
