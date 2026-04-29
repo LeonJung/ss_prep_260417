@@ -27,7 +27,7 @@ from typing import Dict, Iterable, Optional, Sequence
 
 
 # (thumb, index, middle, ring, pinky)
-DEFAULT_CURL_FULL_DEG: Sequence[float] = (60.0, 210.0, 210.0, 210.0, 210.0)
+DEFAULT_CURL_FULL_DEG: Sequence[float] = (40.0, 210.0, 210.0, 210.0, 210.0)
 
 
 def _strip_side(ergo: Dict[str, float]) -> Dict[str, float]:
