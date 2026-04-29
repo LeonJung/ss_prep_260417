@@ -296,9 +296,15 @@ _HTML = """<!doctype html>
   img  {{ border:1px solid #444; max-width:95vw; height:auto; }}
   code {{ color:#9cf; }}
   .hint {{ color:#888; font-size:90%; }}
+  .nav  {{ font-size:90%; margin-bottom:0.5em; }}
 </style></head>
 <body>
 <h2>DG5F MuJoCo — {side} hand</h2>
+<div class="nav">
+  view:
+  <a href="/" style="color:#9cf;">stream (MJPEG)</a> ·
+  <a href="/poll" style="color:#9cf;">poll (snapshot)</a>
+</div>
 <img src="/stream"/>
 <p class="hint">Pose control:
   <br>POST <code>/pose</code> with <code>{{"side":"{side}","q":[...20 rad...],
@@ -307,6 +313,49 @@ _HTML = """<!doctype html>
 </p>
 <p class="hint">Status: <span id="lbl">…</span></p>
 <script>
+async function poll() {{
+  try {{
+    const r = await fetch('/status');
+    const d = await r.json();
+    document.getElementById('lbl').textContent = d.label || '(unset)';
+  }} catch(e) {{}}
+  setTimeout(poll, 500);
+}}
+poll();
+</script>
+</body></html>
+"""
+
+# Polling fallback for clients that don't render multipart/x-mixed-replace
+# (some mobile browsers and corporate proxies). Each cycle fetches one
+# JPEG via /snapshot and swaps it in.
+_HTML_POLL = """<!doctype html>
+<html><head><title>DG5F sim — {side} (poll)</title>
+<style>
+  body {{ background:#222; color:#ddd; font-family:monospace;
+         text-align:center; margin:0; padding:1em; }}
+  img  {{ border:1px solid #444; max-width:95vw; height:auto; }}
+  .nav {{ font-size:90%; margin-bottom:0.5em; }}
+  .hint {{ color:#888; font-size:90%; }}
+</style></head>
+<body>
+<h2>DG5F MuJoCo — {side} hand (poll mode)</h2>
+<div class="nav">
+  view:
+  <a href="/" style="color:#9cf;">stream (MJPEG)</a> ·
+  <a href="/poll" style="color:#9cf;">poll (snapshot)</a>
+</div>
+<img id="frame"/>
+<p class="hint">Status: <span id="lbl">…</span></p>
+<script>
+const img = document.getElementById('frame');
+function tick() {{
+  // Cache-bust by appending a counter so the browser refetches.
+  img.src = '/snapshot?t=' + Date.now();
+}}
+img.addEventListener('load',  () => setTimeout(tick, 50));
+img.addEventListener('error', () => setTimeout(tick, 500));
+tick();
 async function poll() {{
   try {{
     const r = await fetch('/status');
@@ -344,6 +393,22 @@ def make_app(state: SimState) -> flask.Flask:
             gen(),
             mimetype="multipart/x-mixed-replace; boundary=frame",
         )
+
+    @app.get("/poll")
+    def poll_page():
+        return _HTML_POLL.format(side=state.side)
+
+    @app.get("/snapshot")
+    def snapshot():
+        # Wait briefly so we serve a fresh frame after recent pose updates.
+        state.wait_for_frame(timeout=0.5)
+        with state.lock:
+            jpeg = state.latest_jpeg
+        if not jpeg:
+            return ("no frame yet", 503)
+        resp = flask.Response(jpeg, mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.post("/pose")
     def post_pose():

@@ -179,6 +179,27 @@ def cmd_set(args):
     print(f"applied  side={side}  label={label}")
 
 
+def _parse_variable_spec(spec: str) -> dict:
+    """Parse 'slot=N,from=F,drive=NAME'."""
+    parts = {}
+    for kv in spec.split(","):
+        if "=" not in kv:
+            raise SystemExit(f"bad --variable token {kv!r} (need k=v)")
+        k, v = kv.split("=", 1)
+        parts[k.strip()] = v.strip()
+    missing = {"slot", "from", "drive"} - parts.keys()
+    if missing:
+        raise SystemExit(f"--variable spec missing keys: {sorted(missing)}")
+    slot = int(parts["slot"])
+    if not (0 <= slot < 20):
+        raise SystemExit(f"slot must be 0..19, got {slot}")
+    return {
+        "slot":  slot,
+        "from":  float(parts["from"]),
+        "drive": parts["drive"],
+    }
+
+
 def cmd_save(args):
     base = args.base
     st = get_status(base)
@@ -191,15 +212,24 @@ def cmd_save(args):
     if args.name in db["modes"] and not args.overwrite:
         raise SystemExit(f"mode {args.name!r} already exists; rerun with "
                          f"--overwrite to replace")
+    variable_axes = [_parse_variable_spec(v) for v in (args.variable or [])]
     db["modes"][args.name] = dict(
         description=args.desc,
-        q=[float(v) for v in st["q"]],
+        q_target=[float(v) for v in st["q"]],
+        variable_axes=variable_axes,
         tip_pose={t["name"]: dict(pos=t["pos"], quat=t["quat"])
                   for t in tp.get("tips", [])},
         timestamp=datetime.datetime.now().isoformat(timespec="seconds"),
     )
     save_yaml(path, db)
-    print(f"saved {args.name!r} -> {path}")
+    if variable_axes:
+        ax_str = ", ".join(
+            f"slot {a['slot']} from {a['from']:+.3f} via {a['drive']}"
+            for a in variable_axes)
+        print(f"saved {args.name!r} -> {path}")
+        print(f"  variable: {ax_str}")
+    else:
+        print(f"saved {args.name!r} -> {path}  (all 20 slots fixed)")
 
 
 def cmd_load(args):
@@ -212,13 +242,26 @@ def cmd_load(args):
     if args.name not in modes:
         raise SystemExit(f"mode {args.name!r} not found in {path}; "
                          f"available: {list(modes)}")
-    q = modes[args.name].get("q")
+    m = modes[args.name]
+    # Newer saves use q_target; older ones used q.
+    q = m.get("q_target")
+    if q is None:
+        q = m.get("q")
     if not isinstance(q, list) or len(q) != 20:
-        raise SystemExit(f"bad q in {path}::modes::{args.name}")
-    resp = post_pose(base, q, f"load:{args.name}", side)
+        raise SystemExit(f"bad q_target in {path}::modes::{args.name}")
+    if args.open and m.get("variable_axes"):
+        # Apply the "fully open" variant: replace each variable slot with
+        # its `from` value.
+        q = list(q)
+        for ax in m["variable_axes"]:
+            q[int(ax["slot"])] = float(ax["from"])
+        suffix = ":open"
+    else:
+        suffix = ""
+    resp = post_pose(base, q, f"load:{args.name}{suffix}", side)
     if not resp.get("ok"):
         raise SystemExit(f"sim refused pose: {resp}")
-    print(f"loaded {args.name!r}  side={side}")
+    print(f"loaded {args.name!r}{suffix}  side={side}")
 
 
 def cmd_list(args):
@@ -278,10 +321,16 @@ def main(argv=None):
     s.add_argument("name")
     s.add_argument("--desc", default="")
     s.add_argument("--overwrite", action="store_true")
+    s.add_argument("--variable", action="append", default=[],
+                   help='axis spec "slot=N,from=F,drive=NAME"; repeatable. '
+                        "All other slots are frozen at the current pose.")
     s.set_defaults(func=cmd_save)
 
     s = sp.add_parser("load", help="apply a saved grasp mode")
     s.add_argument("name")
+    s.add_argument("--open", action="store_true",
+                   help="apply the fully-open variant (variable axes "
+                        "set to their `from` value)")
     s.set_defaults(func=cmd_load)
 
     s = sp.add_parser("list", help="list saved grasp modes")
