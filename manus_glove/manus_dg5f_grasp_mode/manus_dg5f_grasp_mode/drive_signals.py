@@ -10,12 +10,12 @@ Spread is ignored on purpose — flexion is what users intuitively
 control with grip intent.
 
 Per-finger `curl_full_deg`:
-  - thumb defaults to 100 deg: the Manus thumb usually only reaches
-    ~90–110 deg total stretch even at full flex, because the IP/CMC
-    joints have a smaller mechanical range than the long fingers.
-    Using the long-finger 210 deg here would map the user's full
-    thumb motion to only ~0.5 — they'd see the DG5F move halfway
-    when their glove is maxed.
+  - thumb defaults to 60 deg: the Manus thumb's usable stretch sum
+    at "full flex" was empirically ~50–60 deg with our user's glove
+    — using 210 (or even 100) here mapped a maxed thumb to only
+    ~0.3–0.5 drive, so the DG5F barely moved past halfway. 60 deg
+    leaves a small headroom so a comfortably curled thumb already
+    saturates to 1.0.
   - long fingers default to 210 deg (3 × 70 deg), tuned to typical
     Manus driver output for a tight fist.
 Override per-finger via the wrapper node's `curl_full_deg` ROS param
@@ -27,7 +27,7 @@ from typing import Dict, Iterable, Optional, Sequence
 
 
 # (thumb, index, middle, ring, pinky)
-DEFAULT_CURL_FULL_DEG: Sequence[float] = (100.0, 210.0, 210.0, 210.0, 210.0)
+DEFAULT_CURL_FULL_DEG: Sequence[float] = (60.0, 210.0, 210.0, 210.0, 210.0)
 
 
 def _strip_side(ergo: Dict[str, float]) -> Dict[str, float]:
