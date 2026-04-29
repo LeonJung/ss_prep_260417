@@ -1,0 +1,4 @@
+# Saved DG5F right-hand grasp modes — populated by capture_cli.
+# Each mode stores joint targets q[20] (rad) and palm-frame tip poses.
+side: right
+modes: {}

@@ -25,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "sim_view = dg5f_mujoco_sim.sim_view:main",
+            "capture_cli = dg5f_mujoco_sim.capture_cli:main",
         ],
     },
 )

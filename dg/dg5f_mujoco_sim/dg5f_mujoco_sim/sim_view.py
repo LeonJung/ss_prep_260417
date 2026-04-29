@@ -54,6 +54,42 @@ JOINT_ORDER_LEFT: List[str] = [
 JOINT_ORDER_RIGHT: List[str] = [n.replace("lj_", "rj_") for n in JOINT_ORDER_LEFT]
 
 
+# MuJoCo merges fixed-joint bodies on URDF import — so the *_tip and *_palm
+# links don't appear as separate bodies. We resolve tip frames by hand: each
+# tip is at a fixed offset from the j_4 body (URDF lj_dg_<f>_tip joint
+# origin), and palm is a fixed offset from world along +Z (lj_dg_base +
+# lj_dg_palm origins, both rotation-free).
+#
+# Values copied from dg5f_description/urdf/dg5f_{left,right}.urdf.
+TIP_OFFSETS_LEFT = [
+    (0.0, -0.0363, 0.0),   # thumb
+    (0.0,  0.0,    0.0255),  # index
+    (0.0,  0.0,    0.0255),  # middle
+    (0.0,  0.0,    0.0255),  # ring
+    (0.0,  0.0,    0.0363),  # pinky
+]
+TIP_OFFSETS_RIGHT = [
+    (0.0,  0.0363, 0.0),   # thumb (mirrored Y)
+    (0.0,  0.0,    0.0255),
+    (0.0,  0.0,    0.0255),
+    (0.0,  0.0,    0.0255),
+    (0.0,  0.0,    0.0363),
+]
+PALM_WORLD_OFFSET = (0.0, 0.0, 0.0738)  # mount->base + base->palm
+
+
+def _quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Hamilton product, (w,x,y,z) convention."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return np.array([
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ], dtype=np.float64)
+
+
 class SimState:
     """Sim state + dedicated render thread.
 
@@ -63,7 +99,9 @@ class SimState:
     requests via `pending_q` and read the latest JPEG out of `latest_jpeg`.
     """
 
-    def __init__(self, side: str, width: int, height: int, fps: int):
+    def __init__(self, side: str, width: int, height: int, fps: int,
+                 cam_distance: float, cam_azimuth: float, cam_elevation: float,
+                 cam_lookat: tuple):
         self.side = side
         self.width = width
         self.height = height
@@ -77,6 +115,15 @@ class SimState:
         self.last_pose_mtime = 0.0
         self.pose_label = "open"
         self.latest_jpeg: bytes = b""
+        # Camera state — held under self.lock; the render thread reads
+        # these every tick so HTTP /camera POST takes effect immediately.
+        self.cam_distance = float(cam_distance)
+        self.cam_azimuth = float(cam_azimuth)
+        self.cam_elevation = float(cam_elevation)
+        self.cam_lookat = tuple(float(x) for x in cam_lookat)
+        # Cached tip poses (palm-frame) — refreshed after each mj_forward.
+        # Each entry: dict(name, pos=[x,y,z], quat=[w,x,y,z]).
+        self.tip_poses: List[dict] = []
         self._stop = threading.Event()
         self._frame_event = threading.Event()
         self._thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -97,6 +144,18 @@ class SimState:
         with self.lock:
             self.pending_q = np.asarray(q, dtype=np.float64).copy()
             self.pending_label = label
+
+    def update_camera(self, distance=None, azimuth=None, elevation=None,
+                      lookat=None):
+        with self.lock:
+            if distance is not None:
+                self.cam_distance = float(distance)
+            if azimuth is not None:
+                self.cam_azimuth = float(azimuth)
+            if elevation is not None:
+                self.cam_elevation = float(elevation)
+            if lookat is not None:
+                self.cam_lookat = tuple(float(x) for x in lookat)
 
     def _poll_pose_file(self) -> None:
         try:
@@ -123,6 +182,30 @@ class SimState:
         self._frame_event.wait(timeout=timeout)
         self._frame_event.clear()
 
+    def _compute_tip_poses(self, model, data, j4_bids: List[int],
+                           tip_offsets: List[tuple],
+                           finger_names: List[str]) -> List[dict]:
+        """Tip poses in the palm frame.
+
+        Each tip is at a fixed offset (URDF lj_dg_<f>_tip joint origin)
+        from the j_4 body it lives on. Palm has no rotation w.r.t. world,
+        so palm-frame pose = world-frame pose minus PALM_WORLD_OFFSET.
+        """
+        palm_pos = np.asarray(PALM_WORLD_OFFSET, dtype=np.float64)
+        out = []
+        for name, j4_bid, offset in zip(finger_names, j4_bids, tip_offsets):
+            j4_pos = data.xpos[j4_bid]
+            j4_mat = data.xmat[j4_bid].reshape(3, 3)
+            j4_q = data.xquat[j4_bid]
+            tip_world = j4_pos + j4_mat @ np.asarray(offset, dtype=np.float64)
+            pos_palm = tip_world - palm_pos
+            out.append(dict(
+                name=name,
+                pos=[float(x) for x in pos_palm],
+                quat=[float(x) for x in j4_q],
+            ))
+        return out
+
     def _render_loop(self):
         # All mujoco/EGL state stays on this thread.
         model = mujoco.MjModel.from_xml_path(str(self._urdf_path))
@@ -135,15 +218,29 @@ class SimState:
                 raise RuntimeError(f"joint not found in URDF: {name}")
             qpos_idx.append(int(model.jnt_qposadr[jid]))
 
+        prefix = "ll_" if self.side == "left" else "rl_"
+        finger_names = ["thumb", "index", "middle", "ring", "pinky"]
+        # MuJoCo merges fixed-joint *_tip links into the parent j_4 body.
+        # We anchor on j_4 and add the URDF tip-joint offset by hand.
+        j4_bids: List[int] = []
+        for f in range(1, 6):
+            j4_name = f"{prefix}dg_{f}_4"
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, j4_name)
+            if bid < 0:
+                raise RuntimeError(f"j_4 body not found: {j4_name}")
+            j4_bids.append(bid)
+        tip_offsets = (TIP_OFFSETS_LEFT if self.side == "left"
+                       else TIP_OFFSETS_RIGHT)
+
         renderer = mujoco.Renderer(model, height=self.height, width=self.width)
         cam = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(cam)
-        cam.lookat[:] = [0.0, 0.0, 0.05]
-        cam.distance = 0.30
-        cam.elevation = -20.0
-        cam.azimuth = 90.0 if self.side == "left" else -90.0
 
         mujoco.mj_forward(model, data)
+        # Initial tip poses
+        with self.lock:
+            self.tip_poses = self._compute_tip_poses(
+                model, data, j4_bids, tip_offsets, finger_names)
         period = 1.0 / self.fps
 
         try:
@@ -155,14 +252,21 @@ class SimState:
                     pending = self.pending_q
                     label = self.pending_label
                     self.pending_q = None
+                    cam.lookat[:] = list(self.cam_lookat)
+                    cam.distance = self.cam_distance
+                    cam.elevation = self.cam_elevation
+                    cam.azimuth = self.cam_azimuth
                 if pending is not None:
                     for i, qi in enumerate(qpos_idx):
                         data.qpos[qi] = float(pending[i])
                     mujoco.mj_forward(model, data)
+                    tips = self._compute_tip_poses(
+                        model, data, j4_bids, tip_offsets, finger_names)
                     with self.lock:
                         self.target_q = pending.copy()
                         if label:
                             self.pose_label = label
+                        self.tip_poses = tips
 
                 renderer.update_scene(data, camera=cam)
                 arr = renderer.render()
@@ -263,7 +367,36 @@ def make_app(state: SimState) -> flask.Flask:
                 side=state.side,
                 label=state.pose_label,
                 q=state.target_q.tolist(),
+                cam=dict(
+                    distance=state.cam_distance,
+                    azimuth=state.cam_azimuth,
+                    elevation=state.cam_elevation,
+                    lookat=list(state.cam_lookat),
+                ),
             )
+
+    @app.get("/tips")
+    def tips():
+        with state.lock:
+            return flask.jsonify(
+                side=state.side,
+                frame="palm",
+                tips=list(state.tip_poses),
+            )
+
+    @app.post("/camera")
+    def post_camera():
+        d = flask.request.get_json(force=True, silent=True) or {}
+        try:
+            state.update_camera(
+                distance=d.get("distance"),
+                azimuth=d.get("azimuth"),
+                elevation=d.get("elevation"),
+                lookat=d.get("lookat"),
+            )
+        except Exception as e:
+            return flask.jsonify(ok=False, err=str(e)), 400
+        return flask.jsonify(ok=True)
 
     return app
 
@@ -276,9 +409,27 @@ def main(argv=None):
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--fps", type=int, default=30)
+    # Camera defaults: framed to show the whole hand from a 45° angle
+    # off the palm-normal. Tweak via /camera POST or these flags.
+    p.add_argument("--cam-distance", type=float, default=0.55)
+    p.add_argument("--cam-azimuth", type=float, default=None,
+                   help="default: 45 (left) / -45 (right)")
+    p.add_argument("--cam-elevation", type=float, default=-15.0)
+    p.add_argument("--cam-lookat", type=str, default="0,0,0.10",
+                   help="x,y,z comma-separated")
     args = p.parse_args(argv)
 
-    state = SimState(args.side, args.width, args.height, fps=args.fps)
+    azimuth = (args.cam_azimuth if args.cam_azimuth is not None
+               else (45.0 if args.side == "left" else -45.0))
+    lookat = tuple(float(x) for x in args.cam_lookat.split(","))
+    if len(lookat) != 3:
+        raise ValueError(f"--cam-lookat must be 3 numbers, got {args.cam_lookat!r}")
+
+    state = SimState(args.side, args.width, args.height, fps=args.fps,
+                     cam_distance=args.cam_distance,
+                     cam_azimuth=azimuth,
+                     cam_elevation=args.cam_elevation,
+                     cam_lookat=lookat)
     state.start()
     app = make_app(state)
     print(f"[dg5f_mujoco_sim] side={args.side} "
