@@ -43,7 +43,7 @@ from control_msgs.msg import MultiDOFCommand
 from manus_ros2_msgs.msg import ManusGlove
 from std_msgs.msg import String
 
-from .drive_signals import compute_drives
+from .drive_signals import DEFAULT_CURL_FULL_DEG, compute_drives
 
 
 def _default_yaml(side: str) -> str:
@@ -72,6 +72,10 @@ class GraspModeNode(Node):
         self.declare_parameter("grasp_modes_yaml", "")
         self.declare_parameter("default_mode", "free")
         self.declare_parameter("expected_side", "any")  # right | left | any
+        # Per-finger sum-of-stretch (deg) that maps to drive=1.0.
+        # Order: thumb, index, middle, ring, pinky.
+        self.declare_parameter("curl_full_deg", list(DEFAULT_CURL_FULL_DEG))
+        self.declare_parameter("debug_log_period_s", 1.0)
 
         self._side = str(self.get_parameter("hand_side").value).lower()
         if self._side not in ("left", "right"):
@@ -85,6 +89,15 @@ class GraspModeNode(Node):
                         or _default_yaml(self._side))
         self._expected_side = str(
             self.get_parameter("expected_side").value).lower()
+        self._curl_full_deg = [
+            float(x) for x in self.get_parameter("curl_full_deg").value
+        ]
+        if len(self._curl_full_deg) != 5:
+            raise ValueError(
+                f"curl_full_deg must be 5 floats (thumb..pinky), got "
+                f"{self._curl_full_deg!r}")
+        self._debug_period = float(
+            self.get_parameter("debug_log_period_s").value)
 
         self._modes: Dict[str, Any] = self._load_modes(yaml_path)
         self.get_logger().info(
@@ -102,6 +115,7 @@ class GraspModeNode(Node):
         self._latest_base_values: Optional[List[float]] = None
         self._latest_dof_names: Optional[List[str]] = None
         self._latest_glove: Optional[ManusGlove] = None
+        self._latest_drives: Dict[str, float] = {}
 
         self._sub_ref = self.create_subscription(
             MultiDOFCommand, ref_in_topic, self._on_ref_in, 10)
@@ -111,9 +125,13 @@ class GraspModeNode(Node):
             String, mode_topic, self._on_mode, 10)
         self._pub = self.create_publisher(MultiDOFCommand, ref_out_topic, 10)
 
+        if self._debug_period > 0.0:
+            self.create_timer(self._debug_period, self._debug_log)
+
         self.get_logger().info(
             f"side={self._side}  mode={self._mode_name}  "
-            f"in={ref_in_topic}  glove={glove_topic}  out={ref_out_topic}")
+            f"in={ref_in_topic}  glove={glove_topic}  out={ref_out_topic}  "
+            f"curl_full_deg={self._curl_full_deg}")
 
     @staticmethod
     def _load_modes(yaml_path: str) -> Dict[str, Any]:
@@ -161,8 +179,30 @@ class GraspModeNode(Node):
                 and (msg.side or "").lower() != self._expected_side):
             return
         self._latest_glove = msg
+        ergo = {e.type: float(e.value) for e in msg.ergonomics}
+        self._latest_drives = compute_drives(ergo, self._curl_full_deg)
         if self._mode_name != "free" and self._mode_name in self._modes:
             self._publish_mode_pose()
+
+    def _debug_log(self):
+        if self._mode_name == "free":
+            self.get_logger().info(
+                f"mode=free  passing through base retargeter")
+            return
+        d = self._latest_drives
+        if not d:
+            self.get_logger().info(
+                f"mode={self._mode_name}  no glove data yet")
+            return
+        compact = (
+            f"thumb={d.get('thumb_curl', 0):.2f} "
+            f"idx={d.get('index_curl', 0):.2f} "
+            f"mid={d.get('middle_curl', 0):.2f} "
+            f"rng={d.get('ring_curl', 0):.2f} "
+            f"pky={d.get('pinky_curl', 0):.2f} "
+            f"hand={d.get('hand_curl', 0):.2f}"
+        )
+        self.get_logger().info(f"mode={self._mode_name}  drives: {compact}")
 
     def _publish_mode_pose(self):
         if self._latest_dof_names is None:
@@ -171,15 +211,13 @@ class GraspModeNode(Node):
             return
         defn = self._modes[self._mode_name]
         q = list(defn["q_target"])
-        if defn["variable_axes"] and self._latest_glove is not None:
-            ergo = {e.type: float(e.value) for e in self._latest_glove.ergonomics}
-            drives = compute_drives(ergo)
+        if defn["variable_axes"] and self._latest_drives:
             for ax in defn["variable_axes"]:
                 slot = int(ax["slot"])
                 from_v = float(ax["from"])
                 target_v = q[slot]
                 drive = str(ax["drive"])
-                f = float(drives.get(drive, 0.0))
+                f = float(self._latest_drives.get(drive, 0.0))
                 q[slot] = from_v + f * (target_v - from_v)
         self._publish(q, self._latest_dof_names)
 

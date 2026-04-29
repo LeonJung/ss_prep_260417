@@ -1,21 +1,33 @@
 """Compute drive scalars (curl ratios) from a Manus glove ergo frame.
 
-A drive scalar is a clamped float in [0,1] that goes from 0 (finger
-fully extended) to 1 (finger fully curled). Variable_axes in the
+A drive scalar is a clamped float in [0,1] — 0 when the finger is
+fully extended, 1 when fully curled. Variable_axes in the
 grasp_modes yaml reference these by name (`thumb_curl`, `index_curl`,
 `hand_curl`, ...) — the wrapper node looks up the float here.
 
-Curl is the sum of MCP/PIP/DIP stretch (deg) divided by 210 deg
-(70 per joint, an empirical "fully closed" sum). Spread is ignored
-on purpose — flexion is what users intuitively control with grip
-intent.
+Curl = (MCPStretch + PIPStretch + DIPStretch) (deg) / curl_full_deg.
+Spread is ignored on purpose — flexion is what users intuitively
+control with grip intent.
+
+Per-finger `curl_full_deg`:
+  - thumb defaults to 100 deg: the Manus thumb usually only reaches
+    ~90–110 deg total stretch even at full flex, because the IP/CMC
+    joints have a smaller mechanical range than the long fingers.
+    Using the long-finger 210 deg here would map the user's full
+    thumb motion to only ~0.5 — they'd see the DG5F move halfway
+    when their glove is maxed.
+  - long fingers default to 210 deg (3 × 70 deg), tuned to typical
+    Manus driver output for a tight fist.
+Override per-finger via the wrapper node's `curl_full_deg` ROS param
+(5-element list: thumb, index, middle, ring, pinky).
 """
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Iterable, Optional, Sequence
 
 
-_CURL_FULL_DEG = 210.0  # 3 joints * ~70 deg each
+# (thumb, index, middle, ring, pinky)
+DEFAULT_CURL_FULL_DEG: Sequence[float] = (100.0, 210.0, 210.0, 210.0, 210.0)
 
 
 def _strip_side(ergo: Dict[str, float]) -> Dict[str, float]:
@@ -27,29 +39,50 @@ def _strip_side(ergo: Dict[str, float]) -> Dict[str, float]:
     return dict(ergo)
 
 
-def _finger_curl(e: Dict[str, float], finger: str) -> float:
-    s = (
+def _finger_stretch_deg(e: Dict[str, float], finger: str) -> float:
+    return (
         float(e.get(f"{finger}MCPStretch", 0.0))
         + float(e.get(f"{finger}PIPStretch", 0.0))
         + float(e.get(f"{finger}DIPStretch", 0.0))
     )
-    return max(0.0, min(1.0, s / _CURL_FULL_DEG))
 
 
-def compute_drives(ergo: Dict[str, float]) -> Dict[str, float]:
-    """Return the named drive scalars used by grasp_modes variable_axes."""
+_FINGERS = (
+    ("thumb",  "Thumb"),
+    ("index",  "Index"),
+    ("middle", "Middle"),
+    ("ring",   "Ring"),
+    ("pinky",  "Pinky"),
+)
+
+
+def compute_drives(ergo: Dict[str, float],
+                   curl_full_deg: Optional[Iterable[float]] = None
+                   ) -> Dict[str, float]:
+    """Return the named drive scalars used by grasp_modes variable_axes.
+
+    `curl_full_deg`: optional 5-element override (thumb..pinky).
+    """
+    full = list(curl_full_deg) if curl_full_deg is not None \
+        else list(DEFAULT_CURL_FULL_DEG)
+    if len(full) != 5:
+        raise ValueError(f"curl_full_deg must have 5 entries, got {full!r}")
     e = _strip_side(ergo)
-    fingers = {
-        "thumb":  "Thumb",
-        "index":  "Index",
-        "middle": "Middle",
-        "ring":   "Ring",
-        "pinky":  "Pinky",
-    }
     drives: Dict[str, float] = {}
-    for short, long in fingers.items():
-        drives[f"{short}_curl"] = _finger_curl(e, long)
+    for i, (short, long) in enumerate(_FINGERS):
+        denom = max(1e-3, float(full[i]))
+        s = _finger_stretch_deg(e, long)
+        drives[f"{short}_curl"] = max(0.0, min(1.0, s / denom))
     drives["hand_curl"] = sum(
-        drives[f"{f}_curl"] for f in fingers
-    ) / len(fingers)
+        drives[f"{short}_curl"] for short, _ in _FINGERS
+    ) / len(_FINGERS)
+    # Also expose raw per-joint stretches in [0,1] (some grasp modes
+    # may want to map a single joint instead of the whole finger).
+    for _short, long in _FINGERS:
+        for jname in ("MCPStretch", "PIPStretch", "DIPStretch"):
+            v = float(e.get(f"{long}{jname}", 0.0))
+            # normalize each by 90 deg by default — matches typical
+            # per-joint range. Still clamped to [0,1].
+            drives[f"{long.lower()}_{jname.lower()[:3]}_stretch"] = \
+                max(0.0, min(1.0, v / 90.0))
     return drives
