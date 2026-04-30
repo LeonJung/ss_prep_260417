@@ -5,7 +5,7 @@ modes:
     description: left hand. Thumb pad on radial side of index proximal phalanx. b/c/d/e
       fully curled to palm.
     q_target:
-    - -0.0524
+    - -0.1571
     - 0.0
     - -1.5707
     - 0.0
