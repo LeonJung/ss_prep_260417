@@ -43,7 +43,7 @@ RIGHT_JOINT_NAMES = [
 RIGHT_JOINT_LIMITS = {
     "rj_dg_1_1": (-0.3839724354387525, 0.8901179185171081),
     "rj_dg_1_2": (-math.pi, 0.0),
-    "rj_dg_1_3": (-1.63, 1.63),
+    "rj_dg_1_3": (-math.pi / 2, math.pi / 2),
     "rj_dg_1_4": (-math.pi / 2, math.pi / 2),
     "rj_dg_2_1": (-0.4188790204786391, 0.6108652381980153),
     "rj_dg_2_2": (0.0, 2.007128639793479),
@@ -93,7 +93,7 @@ LEFT_JOINT_NAMES = [n.replace("rj_", "lj_") for n in RIGHT_JOINT_NAMES]
 LEFT_JOINT_LIMITS = {
     "lj_dg_1_1": (-0.8901179185171081, 0.3839724354387525),
     "lj_dg_1_2": (0.0, math.pi),
-    "lj_dg_1_3": (-1.63, 1.63),
+    "lj_dg_1_3": (-math.pi / 2, math.pi / 2),
     "lj_dg_1_4": (-math.pi / 2, math.pi / 2),
     "lj_dg_2_1": (-0.6108652381980153, 0.4188790204786391),
     "lj_dg_2_2": (0.0, 2.007128639793479),
