@@ -1,0 +1,18 @@
+# PID-controller gain overrides for the DG5F left hand.
+#
+# Loaded into the controller_manager *after* the vendor's
+# dg5f_driver/config/dg5f_left_pid_all_controller.yaml. ros2_control's
+# parameter loader merges flat dotted keys, so listing only the joints
+# we want to change is enough — the other 19 stay at the vendor
+# defaults.
+#
+# Increase Kp here (URDF effort cap is 7.5 N·m, so commanded effort =
+# Kp * pos_error saturates at error ≈ 7.5/Kp). Bump effort cap in the
+# URDF if you want more headroom than that.
+
+/**/lj_dg_pospid:
+  ros__parameters:
+    gains:
+      # lj_dg_1_1: thumb CMC. User asked for stronger torque so the
+      # small key_grip CMC offset is felt against thumb friction.
+      lj_dg_1_1: { p: 3.0, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
