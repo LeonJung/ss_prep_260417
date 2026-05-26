@@ -302,6 +302,18 @@ class ManusDg5fRetarget(Node):
                 lo, hi = self._joint_limits[name]
                 qd_rad[i] = _clamp(qd_rad[i], lo, hi)
 
+        # Safety: a faulty/uncalibrated glove can emit NaN/inf, which the
+        # min/max clamp above does NOT catch (NaN comparisons are False), so
+        # it would otherwise reach the PID controller and drive the motors
+        # erratically (stall current -> overheating). Drop such frames; the
+        # controller then holds its last good reference.
+        if not all(math.isfinite(v) for v in qd_rad):
+            self.get_logger().warn(
+                "non-finite joint command (glove sent NaN/inf?); "
+                "dropping frame, holding last reference",
+                throttle_duration_sec=1.0)
+            return
+
         out = MultiDOFCommand()
         out.dof_names = list(self._joint_names)
         out.values = qd_rad

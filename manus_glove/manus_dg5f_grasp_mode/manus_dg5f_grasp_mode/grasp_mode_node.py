@@ -32,6 +32,7 @@ Switch modes by publishing on /grasp_mode (std_msgs/String):
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -222,6 +223,14 @@ class GraspModeNode(Node):
         self._publish(q, self._latest_dof_names)
 
     def _publish(self, values: List[float], names: List[str]):
+        # Safety: never forward NaN/inf to the controller (a faulty glove or
+        # bad upstream value would otherwise drive the motors erratically and
+        # overheat them). Drop the frame; controller holds last reference.
+        if not all(math.isfinite(v) for v in values):
+            self.get_logger().warn(
+                "non-finite reference (NaN/inf upstream); dropping frame",
+                throttle_duration_sec=1.0)
+            return
         out = MultiDOFCommand()
         out.dof_names = list(names)
         out.values = list(values)
