@@ -82,6 +82,9 @@ class ManusDg5fSotaRetargetA(Node):
         # Side + topics
         self.declare_parameter("hand_side", "right")
         self.declare_parameter("input_topic", "/manus_glove_1")
+        # Subscribe to all candidate glove topics and pick by `side` (Manus
+        # swaps glove indices between sessions). expected_side="any" keeps one.
+        self.declare_parameter("input_topics", ["/manus_glove_0", "/manus_glove_1"])
         self.declare_parameter("output_topic", "/dg5f_right/rj_dg_pospid/reference")
         self.declare_parameter("expected_side", "right")
         self.declare_parameter("joint_states_topic", "/dg5f_right/joint_states")
@@ -138,6 +141,13 @@ class ManusDg5fSotaRetargetA(Node):
         self._in_topic = self.get_parameter("input_topic").value
         self._out_topic = self.get_parameter("output_topic").value
         self._expected_side = str(self.get_parameter("expected_side").value).lower()
+        if self._expected_side == "any":
+            self._in_topics = [self._in_topic]
+        else:
+            self._in_topics = [str(t) for t in
+                               self.get_parameter("input_topics").value]
+            if self._in_topic and self._in_topic not in self._in_topics:
+                self._in_topics.append(self._in_topic)
 
         self._cmc_mode = str(self.get_parameter("thumb_cmc_mode").value).lower()
         self._cmc_fixed = float(self.get_parameter("thumb_cmc_fixed_value_rad").value)
@@ -189,8 +199,9 @@ class ManusDg5fSotaRetargetA(Node):
         self._contact: Optional[np.ndarray] = None
         self._last_publish_stamp: Optional[float] = None
 
-        self._sub_glove = self.create_subscription(
-            ManusGlove, self._in_topic, self._on_glove, 10)
+        self._subs_glove = [
+            self.create_subscription(ManusGlove, t, self._on_glove, 10)
+            for t in self._in_topics]
         self._pub_cmd = self.create_publisher(MultiDOFCommand, self._out_topic, 10)
 
         if self._contact_cfg.enabled:

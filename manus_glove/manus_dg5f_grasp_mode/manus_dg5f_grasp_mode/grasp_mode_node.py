@@ -63,6 +63,9 @@ class GraspModeNode(Node):
 
         self.declare_parameter("hand_side", "left")
         self.declare_parameter("glove_topic", "/manus_glove_0")
+        # Subscribe to all candidate glove topics; the side filter keeps the
+        # matching glove regardless of which index Manus assigned this session.
+        self.declare_parameter("glove_topics", ["/manus_glove_0", "/manus_glove_1"])
         self.declare_parameter(
             "reference_in_topic",
             "/dg5f_left/lj_dg_pospid/reference_free")
@@ -90,6 +93,13 @@ class GraspModeNode(Node):
                         or _default_yaml(self._side))
         self._expected_side = str(
             self.get_parameter("expected_side").value).lower()
+        if self._expected_side == "any":
+            glove_topics = [glove_topic]
+        else:
+            glove_topics = [str(t) for t in
+                            self.get_parameter("glove_topics").value]
+            if glove_topic and glove_topic not in glove_topics:
+                glove_topics.append(glove_topic)
         self._curl_full_deg = [
             float(x) for x in self.get_parameter("curl_full_deg").value
         ]
@@ -120,8 +130,9 @@ class GraspModeNode(Node):
 
         self._sub_ref = self.create_subscription(
             MultiDOFCommand, ref_in_topic, self._on_ref_in, 10)
-        self._sub_glove = self.create_subscription(
-            ManusGlove, glove_topic, self._on_glove, 10)
+        self._subs_glove = [
+            self.create_subscription(ManusGlove, t, self._on_glove, 10)
+            for t in glove_topics]
         self._sub_mode = self.create_subscription(
             String, mode_topic, self._on_mode, 10)
         self._pub = self.create_publisher(MultiDOFCommand, ref_out_topic, 10)
@@ -131,7 +142,7 @@ class GraspModeNode(Node):
 
         self.get_logger().info(
             f"side={self._side}  mode={self._mode_name}  "
-            f"in={ref_in_topic}  glove={glove_topic}  out={ref_out_topic}  "
+            f"in={ref_in_topic}  glove={glove_topics}  out={ref_out_topic}  "
             f"curl_full_deg={self._curl_full_deg}")
 
     @staticmethod

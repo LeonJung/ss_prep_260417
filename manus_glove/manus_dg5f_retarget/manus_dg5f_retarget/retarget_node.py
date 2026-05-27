@@ -203,6 +203,11 @@ class ManusDg5fRetarget(Node):
 
         self.declare_parameter("hand_side", "right")           # right | left
         self.declare_parameter("input_topic", "/manus_glove_1")
+        # Manus enumerates gloves by connection order, so the left glove can
+        # land on /manus_glove_0 or _1 between sessions. We subscribe to every
+        # candidate topic and pick the matching glove by `side` (below), which
+        # is robust to that index swap. (expected_side="any" keeps single topic.)
+        self.declare_parameter("input_topics", ["/manus_glove_0", "/manus_glove_1"])
         self.declare_parameter("output_topic", "/dg5f_right/rj_dg_pospid/reference")
         self.declare_parameter("expected_side", "right")       # right | left | any
         self.declare_parameter("thumb_cmc_mode", "fixed")
@@ -224,6 +229,15 @@ class ManusDg5fRetarget(Node):
         self._in_topic = self.get_parameter("input_topic").value
         self._out_topic = self.get_parameter("output_topic").value
         self._expected_side = str(self.get_parameter("expected_side").value).lower()
+        # Listen on all candidate glove topics when filtering to a side; with
+        # "any" there is nothing to disambiguate, so keep the single topic.
+        if self._expected_side == "any":
+            self._in_topics = [self._in_topic]
+        else:
+            self._in_topics = [str(t) for t in
+                               self.get_parameter("input_topics").value]
+            if self._in_topic and self._in_topic not in self._in_topics:
+                self._in_topics.append(self._in_topic)
         self._cmc_mode = str(self.get_parameter("thumb_cmc_mode").value)
         self._cmc_fixed = float(self.get_parameter("thumb_cmc_fixed_value_rad").value)
         self._cmc_offset = float(self.get_parameter("thumb_cmc_offset_deg").value)
@@ -237,14 +251,15 @@ class ManusDg5fRetarget(Node):
         if len(self._calib) != 20 or len(self._dir) != 20:
             raise ValueError("calib / dir_sign must have exactly 20 entries")
 
-        self._sub = self.create_subscription(
-            ManusGlove, self._in_topic, self._on_glove, 10
-        )
+        self._subs = [
+            self.create_subscription(ManusGlove, t, self._on_glove, 10)
+            for t in self._in_topics
+        ]
         self._pub = self.create_publisher(MultiDOFCommand, self._out_topic, 10)
 
         self.get_logger().info(
             f"manus_dg5f_retarget[{self._hand_side}]: "
-            f"{self._in_topic} -> {self._out_topic} "
+            f"{self._in_topics} -> {self._out_topic} "
             f"| thumb_cmc_mode={self._cmc_mode} "
             f"| expected_side={self._expected_side}"
         )
