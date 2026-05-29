@@ -16,3 +16,12 @@
       # lj_dg_1_1: thumb CMC. User asked for stronger torque so the
       # small key_grip CMC offset is felt against thumb friction.
       lj_dg_1_1: { p: 3.0, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      # lj_dg_1_4: thumb DIP. The motor on this channel draws current but
+      # produces no controllable torque (shorted winding / failed driver
+      # MOSFET suspected) — feels free under hand, doesn't move when
+      # commanded, and runs hot if the PID keeps pushing. Set all gains
+      # to zero so the controller commands zero effort and no current
+      # flows on this channel. Joint is uncontrolled (free) until vendor
+      # service replaces the motor/driver; teleop still works on the
+      # other 19 joints.
+      lj_dg_1_4: { p: 0.0, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
