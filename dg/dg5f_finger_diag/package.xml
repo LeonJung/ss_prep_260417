@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>dg5f_finger_diag</name>
+  <version>0.0.1</version>
+  <description>Per-joint self-diagnostic for the DG5F hand: drives each of the 20 joints with a small step from the current pose, measures position response and effort, and prints a PASS/WARN/FAIL summary so flaky fingers can be identified before teleop.</description>
+  <maintainer email="jung.ryuwoon@gmail.com">LeonJung</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
